@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lanterna — Brand Mark</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0C0A12;
+    --ink-2:#15121C;
+    --ink-3:#1E1A28;
+    --paper:#FBF7F0;
+    --brass:#C9A86A;
+    --amber:#FFB24D;
+    --ember:#FF7A2F;
+    --hot:#FFE9B8;
+    --text:#EDE7DD;
+    --muted:#9A9285;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:'Hanken Grotesk',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    line-height:1.5;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px}
+  .eyebrow{
+    font-size:12px;letter-spacing:0.32em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;
+  }
+
+  /* hero */
+  .hero{
+    position:relative;min-height:78vh;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;overflow:hidden;
+    padding:80px 28px 64px;
+  }
+  .hero::before{
+    content:"";position:absolute;inset:0;
+    background:radial-gradient(60% 50% at 50% 42%, rgba(255,150,60,0.14), transparent 70%);
+    pointer-events:none;
+  }
+  .lockup{display:flex;align-items:center;gap:26px;position:relative;z-index:1}
+  .lockup .mark{filter:drop-shadow(0 0 34px rgba(255,150,60,0.28))}
+  @media (prefers-reduced-motion:no-preference){
+    .lockup .mark{animation:breathe 5.5s ease-in-out infinite}
+  }
+  @keyframes breathe{
+    0%,100%{filter:drop-shadow(0 0 30px rgba(255,150,60,0.22))}
+    50%{filter:drop-shadow(0 0 46px rgba(255,150,60,0.40))}
+  }
+  .wordmark{
+    font-weight:700;letter-spacing:-0.03em;line-height:1;
+    font-size:clamp(44px,9vw,96px);
+  }
+  .wordmark .tld{color:var(--amber);font-weight:600}
+  .hero .eyebrow{margin-bottom:38px;position:relative;z-index:1}
+  .concept{
+    margin-top:40px;max-width:540px;color:var(--muted);font-size:17px;
+    position:relative;z-index:1;
+  }
+  .concept b{color:var(--text);font-weight:600}
+
+  /* sections */
+  section{padding:72px 0;border-top:1px solid var(--ink-3)}
+  .sec-head{margin-bottom:38px}
+  .sec-head h2{font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-top:10px}
+
+  .grid{display:grid;gap:18px}
+  .v-grid{grid-template-columns:repeat(3,1fr)}
+  @media (max-width:760px){.v-grid{grid-template-columns:1fr 1fr}}
+  @media (max-width:480px){.v-grid{grid-template-columns:1fr}}
+  .tile{
+    border-radius:18px;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;
+    position:relative;overflow:hidden;border:1px solid var(--ink-3);
+  }
+  .tile.dark{background:radial-gradient(70% 60% at 50% 45%, #1a1622, var(--ink))}
+  .tile.light{background:var(--paper)}
+  .tile.tile-2{background:var(--ink-2)}
+  .tile .cap{
+    position:absolute;left:14px;bottom:12px;font-size:11px;letter-spacing:0.14em;
+    text-transform:uppercase;color:var(--muted);font-weight:600;
+  }
+  .tile.light .cap{color:#8a8275}
+  .squircle{width:42%;border-radius:24%;background:radial-gradient(75% 70% at 50% 42%, #1c1726, #0a0810);
+    display:flex;align-items:center;justify-content:center;box-shadow:0 10px 30px rgba(0,0,0,0.5)}
+
+  /* palette */
+  .sw-grid{grid-template-columns:repeat(6,1fr)}
+  @media (max-width:760px){.sw-grid{grid-template-columns:repeat(3,1fr)}}
+  .sw{border-radius:14px;overflow:hidden;border:1px solid var(--ink-3)}
+  .sw .chip{height:84px}
+  .sw .meta{padding:10px 12px;background:var(--ink-2)}
+  .sw .name{font-size:13px;font-weight:600}
+  .sw .hex{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  /* type */
+  .type-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:18px 28px}
+  .type-spec{color:var(--muted);font-size:14px}
+  .type-spec b{color:var(--text)}
+  .glyphs{font-size:clamp(40px,7vw,72px);font-weight:700;letter-spacing:-0.02em;margin-top:18px}
+  .glyphs span{color:var(--muted);font-weight:400}
+
+  footer{padding:48px 0 72px;color:var(--muted);font-size:14px;border-top:1px solid var(--ink-3)}
+</style>
+</head>
+<body>
+
+<!-- ============ reusable marks ============ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="flame" x1="50" y1="50" x2="78" y2="82" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE9B8"/>
+      <stop offset="0.5" stop-color="#FFB24D"/>
+      <stop offset="1" stop-color="#FF7A2F"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFB24D" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#FFB24D" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.4"/>
+    </filter>
+
+    <!-- PRIMARY: brass frame, glowing play -->
+    <g id="mark-primary">
+      <circle cx="60" cy="66" r="40" fill="url(#halo)"/>
+      <g stroke="#C9A86A" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M48 31 C48 19 72 19 72 31"/>
+        <path d="M46 41 C39 49 39 84 46 92 L74 92 C81 84 81 49 74 41 Z"/>
+      </g>
+      <rect x="41" y="34" width="38" height="7" rx="3.5" fill="#C9A86A"/>
+      <rect x="44" y="92" width="32" height="6" rx="3" fill="#C9A86A"/>
+      <path d="M52 53 L52 79 L76 66 Z" fill="url(#flame)" filter="url(#soft)" opacity="0.9"/>
+      <path d="M52 53 L52 79 L76 66 Z" fill="url(#flame)" stroke="url(#flame)" stroke-width="4" stroke-linejoin="round"/>
+    </g>
+
+    <!-- ON LIGHT: ink frame, amber play -->
+    <g id="mark-light">
+      <g stroke="#0C0A12" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M48 31 C48 19 72 19 72 31"/>
+        <path d="M46 41 C39 49 39 84 46 92 L74 92 C81 84 81 49 74 41 Z"/>
+      </g>
+      <rect x="41" y="34" width="38" height="7" rx="3.5" fill="#0C0A12"/>
+      <rect x="44" y="92" width="32" height="6" rx="3" fill="#0C0A12"/>
+      <path d="M52 53 L52 79 L76 66 Z" fill="url(#flame)" stroke="url(#flame)" stroke-width="4" stroke-linejoin="round"/>
+    </g>
+
+    <!-- MONO INK -->
+    <g id="mark-mono-ink">
+      <g stroke="#0C0A12" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M48 31 C48 19 72 19 72 31"/>
+        <path d="M46 41 C39 49 39 84 46 92 L74 92 C81 84 81 49 74 41 Z"/>
+      </g>
+      <rect x="41" y="34" width="38" height="7" rx="3.5" fill="#0C0A12"/>
+      <rect x="44" y="92" width="32" height="6" rx="3" fill="#0C0A12"/>
+      <path d="M52 53 L52 79 L76 66 Z" fill="#0C0A12" stroke="#0C0A12" stroke-width="4" stroke-linejoin="round"/>
+    </g>
+
+    <!-- MONO AMBER -->
+    <g id="mark-mono-amber">
+      <g stroke="#FFB24D" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M48 31 C48 19 72 19 72 31"/>
+        <path d="M46 41 C39 49 39 84 46 92 L74 92 C81 84 81 49 74 41 Z"/>
+      </g>
+      <rect x="41" y="34" width="38" height="7" rx="3.5" fill="#FFB24D"/>
+      <rect x="44" y="92" width="32" height="6" rx="3" fill="#FFB24D"/>
+      <path d="M52 53 L52 79 L76 66 Z" fill="#FFB24D" stroke="#FFB24D" stroke-width="4" stroke-linejoin="round"/>
+    </g>
+  </defs>
+</svg>
+
+<!-- ============ hero ============ -->
+<header class="hero">
+  <div class="eyebrow">Lanterna · brand mark</div>
+  <div class="lockup">
+    <svg class="mark" width="104" height="104" viewBox="0 0 120 120" aria-label="Lanterna mark"><use href="#mark-primary"/></svg>
+    <div class="wordmark">lanterna<span class="tld">.video</span></div>
+  </div>
+  <p class="concept">One mark, both halves of the brand: a <b>lantern</b> whose light is a <b>play button</b>. The name is the frame, the category is the glow.</p>
+</header>
+
+<!-- ============ variations ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">System</div>
+      <h2>The mark holds up everywhere</h2>
+    </div>
+    <div class="grid v-grid">
+      <div class="tile dark">
+        <svg width="46%" viewBox="0 0 120 120"><use href="#mark-primary"/></svg>
+        <span class="cap">Primary</span>
+      </div>
+      <div class="tile light">
+        <svg width="46%" viewBox="0 0 120 120"><use href="#mark-light"/></svg>
+        <span class="cap">On light</span>
+      </div>
+      <div class="tile dark">
+        <div class="squircle"><svg width="64%" viewBox="0 0 120 120"><use href="#mark-primary"/></svg></div>
+        <span class="cap">App icon</span>
+      </div>
+      <div class="tile tile-2">
+        <svg width="42%" viewBox="0 0 120 120"><use href="#mark-mono-amber"/></svg>
+        <span class="cap">Mono · amber</span>
+      </div>
+      <div class="tile light">
+        <svg width="42%" viewBox="0 0 120 120"><use href="#mark-mono-ink"/></svg>
+        <span class="cap">Mono · ink</span>
+      </div>
+      <div class="tile dark">
+        <div class="lockup" style="gap:14px">
+          <svg width="40" viewBox="0 0 120 120"><use href="#mark-primary"/></svg>
+          <div style="font-weight:700;letter-spacing:-0.03em;font-size:26px">lanterna</div>
+        </div>
+        <span class="cap">Small lockup</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ palette ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Palette</div>
+      <h2>Warm light, deep ink</h2>
+    </div>
+    <div class="grid sw-grid">
+      <div class="sw"><div class="chip" style="background:#0C0A12"></div><div class="meta"><div class="name">Ink</div><div class="hex">#0C0A12</div></div></div>
+      <div class="sw"><div class="chip" style="background:#15121C"></div><div class="meta"><div class="name">Ink 2</div><div class="hex">#15121C</div></div></div>
+      <div class="sw"><div class="chip" style="background:#FFE9B8"></div><div class="meta"><div class="name">Hot</div><div class="hex">#FFE9B8</div></div></div>
+      <div class="sw"><div class="chip" style="background:#FFB24D"></div><div class="meta"><div class="name">Amber</div><div class="hex">#FFB24D</div></div></div>
+      <div class="sw"><div class="chip" style="background:#FF7A2F"></div><div class="meta"><div class="name">Ember</div><div class="hex">#FF7A2F</div></div></div>
+      <div class="sw"><div class="chip" style="background:#C9A86A"></div><div class="meta"><div class="name">Brass</div><div class="hex">#C9A86A</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ type ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Type</div>
+      <h2>Hanken Grotesk</h2>
+    </div>
+    <div class="type-row">
+      <div class="type-spec">Wordmark · <b>Bold 700</b>, tracking −0.03em, lowercase</div>
+      <div class="type-spec">UI &amp; body · <b>Regular 400 / Medium 500</b></div>
+    </div>
+    <div class="glyphs">lanterna<span> — Aa Bb Cc 0123</span></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">Lanterna · video delivery, lit up and sent out. Mark and system, working draft.</div>
+</footer>
+
+</body>
+</html>

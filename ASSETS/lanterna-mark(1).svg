@@ -1,0 +1,31 @@
+<svg width="240" height="240" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Lanterna mark">
+  <defs>
+    <linearGradient id="flame" x1="50" y1="50" x2="78" y2="82" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE9B8"/>
+      <stop offset="0.5" stop-color="#FFB24D"/>
+      <stop offset="1" stop-color="#FF7A2F"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFB24D" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FFB24D" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.4"/>
+    </filter>
+  </defs>
+
+  <!-- ambient glow -->
+  <circle cx="60" cy="66" r="40" fill="url(#halo)"/>
+
+  <!-- lantern frame: brass strokes -->
+  <g stroke="#C9A86A" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M48 31 C48 19 72 19 72 31"/>
+    <path d="M46 41 C39 49 39 84 46 92 L74 92 C81 84 81 49 74 41 Z"/>
+  </g>
+  <rect x="41" y="34" width="38" height="7" rx="3.5" fill="#C9A86A"/>
+  <rect x="44" y="92" width="32" height="6" rx="3" fill="#C9A86A"/>
+
+  <!-- the light: a glowing play triangle -->
+  <path d="M52 53 L52 79 L76 66 Z" fill="url(#flame)" filter="url(#soft)" opacity="0.9"/>
+  <path d="M52 53 L52 79 L76 66 Z" fill="url(#flame)" stroke="url(#flame)" stroke-width="4" stroke-linejoin="round"/>
+</svg>
