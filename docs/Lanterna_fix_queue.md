@@ -65,7 +65,7 @@ Add files with a real video and poster, Replace video with a >200 MB file (prove
 Done when: all three pass by hand.
 
 ### 11. Production origins and access review
-Finalize Cloudflare allowed origins for the production domain (not just 127.0.0.1), and do the password/private access review the packet defers: confirm password galleries actually gate, private galleries are unreachable publicly, and signed URL TTLs are short.
+Finalize Cloudflare allowed origins for the production domain (not just 127.0.0.1), and do the password/private access review the packet defers: confirm password galleries actually gate, private galleries are unreachable publicly, and signed URL TTLs are short. Decide whether private galleries should 404 publicly instead of 403, since 403 confirms existence.
 Done when: reviewed against the SOP's access-control section with findings written down.
 
 ### 12. Guardrail tests so this queue doesn't refill
