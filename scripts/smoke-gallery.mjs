@@ -64,6 +64,7 @@ const result = {
   targetReady: targetVideo.processing_status === 'ready',
   targetStreamReady: targetVideo.stream_ready === true,
   backgroundGet: await rangedGet(backgroundUrl),
+  posterCheck: posterUrl ? 'fetched' : 'skipped_no_poster_key',
   posterGet: await rangedGet(posterUrl),
   streamThumbnailGet: await rangedGet(stream?.thumbnailUrl),
   streamIframeGet: await browserOriginGet(stream?.iframeUrl),
