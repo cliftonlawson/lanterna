@@ -225,7 +225,7 @@ CREATE TABLE IF NOT EXISTS public.gallery_design (
   gallery_id uuid PRIMARY KEY REFERENCES public.galleries(id) ON DELETE CASCADE,
   heading_title text,
   heading_subtitle text,
-  layout_template text NOT NULL DEFAULT 'cinematic',
+  layout_template text NOT NULL DEFAULT 'lumen',
   background_type background_type NOT NULL DEFAULT 'image',
   background_r2_key text,
   theme text NOT NULL DEFAULT 'dark',
@@ -318,7 +318,7 @@ CREATE INDEX IF NOT EXISTS usage_events_account_occurred_idx ON public.usage_eve
 CREATE TABLE IF NOT EXISTS public.account_usage (
   account_id uuid PRIMARY KEY REFERENCES public.accounts(id) ON DELETE CASCADE,
   allowance_used_gb numeric(12,2) NOT NULL DEFAULT 0,
-  allowance_total_gb numeric(12,2) NOT NULL DEFAULT 0,
+  allowance_total_gb numeric(12,2) NOT NULL DEFAULT 50,
   hot_bytes_stored bigint NOT NULL DEFAULT 0,
   cold_bytes_stored bigint NOT NULL DEFAULT 0,
   stream_minutes_stored numeric(12,2) NOT NULL DEFAULT 0,
@@ -452,7 +452,7 @@ BEGIN
   VALUES (new_account_id, COALESCE(display, 'Lanterna Studio'), 'Wedding films, delivered beautifully');
 
   INSERT INTO public.account_usage (account_id, allowance_used_gb, allowance_total_gb, synced_at)
-  VALUES (new_account_id, 0, 0, now());
+  VALUES (new_account_id, 0, 50, now());
 
   RETURN NEW;
 END;
@@ -572,6 +572,10 @@ CREATE POLICY "members can read entitlements" ON public.entitlements
 CREATE POLICY "members can read usage events" ON public.usage_events
   FOR SELECT TO authenticated
   USING (public.is_account_member(account_id));
+
+CREATE POLICY "members can insert usage events" ON public.usage_events
+  FOR INSERT TO authenticated
+  WITH CHECK (public.is_account_member(account_id));
 
 CREATE POLICY "members can read account usage" ON public.account_usage
   FOR SELECT TO authenticated

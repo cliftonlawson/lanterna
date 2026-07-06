@@ -4,7 +4,7 @@ import {
   FolderOpen, Settings, ChevronRight, User,
 } from 'lucide-react';
 import { LanternLogo } from './LanternLogo';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/useAuth';
 import { Project, ProjectType } from '../lib/supabase';
 
 type Props = {

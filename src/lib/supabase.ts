@@ -1,9 +1,47 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+
+const disabledSupabaseClient = {
+  auth: {
+    async getSession() {
+      return { data: { session: null }, error: null };
+    },
+    onAuthStateChange() {
+      return { data: { subscription: { unsubscribe() {} } } };
+    },
+    async signInWithPassword() {
+      return { data: { user: null, session: null }, error: new Error('Supabase is not configured.') };
+    },
+    async signUp() {
+      return { data: { user: null, session: null }, error: new Error('Supabase is not configured.') };
+    },
+    async resend() {
+      return { data: {}, error: new Error('Supabase is not configured.') };
+    },
+    async signOut() {
+      return { error: null };
+    },
+  },
+  from() {
+    return {
+      delete() {
+        return {
+          eq() {
+            return Promise.resolve({ data: null, error: new Error('Supabase is not configured.') });
+          },
+        };
+      },
+    };
+  },
+};
+
+export const supabase: SupabaseClient = (isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : disabledSupabaseClient) as unknown as SupabaseClient;
 
 export type MemberRole = 'owner' | 'member';
 export type ProjectType = 'wedding' | 'engagement' | 'portrait';
@@ -79,6 +117,7 @@ export type Gallery = {
 export type GalleryDesign = {
   gallery_id: string;
   heading_title: string | null;
+  heading_eyebrow: string | null;
   heading_subtitle: string | null;
   layout_template: string;
   background_type: 'image' | 'video';
@@ -86,6 +125,10 @@ export type GalleryDesign = {
   theme: string;
   accent_color: string | null;
   typography: string | null;
+  headline_font: string | null;
+  headline_font_weight: number | null;
+  body_font: string | null;
+  body_font_weight: number | null;
   music_track_r2_key: string | null;
   featured_video_id: string | null;
   enabled_buttons: { share?: boolean; embed?: boolean; download?: boolean } | Record<string, boolean>;
@@ -109,10 +152,33 @@ export type Video = {
   processing_status: ProcessingStatus;
   download_enabled: boolean | null;
   visible_in_gallery: boolean;
+  paid_unlock_enabled: boolean;
+  paid_unlock_price_cents: number;
+  paid_unlock_currency: string;
+  paid_unlock_label: string | null;
+  paid_unlock_tagline: string | null;
+  paid_unlock_trailer: boolean;
   tags: string[];
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+};
+
+export type VideoUnlockPurchase = {
+  id: string;
+  account_id: string;
+  gallery_id: string;
+  video_id: string;
+  buyer_email: string;
+  amount_cents: number;
+  currency: string;
+  platform_fee_cents: number;
+  studio_payout_cents: number;
+  stripe_checkout_session_id: string | null;
+  stripe_payment_intent_id: string | null;
+  status: 'pending' | 'complete' | 'refunded' | 'failed' | string;
+  unlocked_at: string | null;
+  created_at: string;
 };
 
 export type Album = {

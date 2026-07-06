@@ -1,33 +1,72 @@
-import { useState, FormEvent } from 'react';
+import { useEffect, useState, FormEvent } from 'react';
 import { Eye, EyeOff, ArrowLeft } from 'lucide-react';
 import { LanternLogo } from '../components/LanternLogo';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/useAuth';
 
 type Props = {
   onBack: () => void;
 };
 
 export function Auth({ onBack }: Props) {
-  const { signIn, signUp } = useAuth();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const { signIn, signUp, resendConfirmation } = useAuth();
+  const [mode, setMode] = useState<'signin' | 'signup'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('mode') === 'signup' ? 'signup' : 'signin';
+  });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('error_description')) {
+      setError(authMessage(params.get('error_description') ?? 'Unable to confirm email.'));
+      window.history.replaceState({}, '', '/auth');
+      return;
+    }
+
+    if (params.get('type') === 'signup' || params.get('type') === 'recovery') {
+      setNotice('Email confirmed. Sign in with your password to continue.');
+      window.history.replaceState({}, '', '/auth');
+    }
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+    setNotice('');
     setLoading(true);
 
     const fn = mode === 'signin' ? signIn : signUp;
     const { error } = await fn(email, password);
 
     if (error) {
-      setError(error.message);
+      setError(authMessage(error.message));
+    } else if (mode === 'signup') {
+      setNotice('Account created. Check your email for the confirmation link, then come back here to sign in.');
     }
 
+    setLoading(false);
+  };
+
+  const handleResend = async () => {
+    if (!email.trim()) {
+      setError('Enter your email first, then resend the confirmation link.');
+      return;
+    }
+
+    setError('');
+    setNotice('');
+    setLoading(true);
+    const { error } = await resendConfirmation(email);
+    if (error) {
+      setError(authMessage(error.message));
+    } else {
+      setNotice('Confirmation email sent. Open the newest Supabase email, then come back here to sign in.');
+    }
     setLoading(false);
   };
 
@@ -59,7 +98,7 @@ export function Auth({ onBack }: Props) {
           {/* Tab toggle */}
           <div className="flex bg-white/[0.04] rounded-xl p-1 mb-7">
             <button
-              onClick={() => { setMode('signin'); setError(''); }}
+              onClick={() => { setMode('signin'); setError(''); setNotice(''); }}
               className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
                 mode === 'signin'
                   ? 'bg-orange-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.3)]'
@@ -69,7 +108,7 @@ export function Auth({ onBack }: Props) {
               Sign in
             </button>
             <button
-              onClick={() => { setMode('signup'); setError(''); }}
+              onClick={() => { setMode('signup'); setError(''); setNotice(''); }}
               className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
                 mode === 'signup'
                   ? 'bg-orange-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.3)]'
@@ -121,6 +160,22 @@ export function Auth({ onBack }: Props) {
             {error && (
               <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
                 <p className="text-sm text-red-400">{error}</p>
+                {error.toLowerCase().includes('not confirmed') && (
+                  <button
+                    type="button"
+                    onClick={handleResend}
+                    disabled={loading}
+                    className="mt-3 text-sm font-medium text-red-200 hover:text-white disabled:opacity-60"
+                  >
+                    Resend confirmation email
+                  </button>
+                )}
+              </div>
+            )}
+
+            {notice && (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
+                <p className="text-sm text-emerald-300">{notice}</p>
               </div>
             )}
 
@@ -136,16 +191,19 @@ export function Auth({ onBack }: Props) {
             </button>
           </form>
 
-          {mode === 'signup' && (
-            <p className="text-xs text-center text-gray-600 mt-5">
-              By creating an account, you agree to our{' '}
-              <a href="#" className="text-gray-400 hover:text-gray-200 transition-colors">Terms of Service</a>
-              {' '}and{' '}
-              <a href="#" className="text-gray-400 hover:text-gray-200 transition-colors">Privacy Policy</a>.
-            </p>
-          )}
         </div>
       </div>
     </div>
   );
+}
+
+function authMessage(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes('rate') || lower.includes('wait')) {
+    return 'Supabase is rate-limiting confirmation emails. Give it about a minute, then try once. If the first attempt worked, check your inbox before retrying.';
+  }
+  if (lower.includes('email not confirmed')) {
+    return 'Supabase still has this user marked as not confirmed. Use the newest confirmation email, or manually confirm the user in Supabase Authentication.';
+  }
+  return message;
 }

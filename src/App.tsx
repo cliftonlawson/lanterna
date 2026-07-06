@@ -1,18 +1,32 @@
-import { useState } from 'react';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { useEffect, useState } from 'react';
+import { AuthProvider } from './contexts/AuthContext';
+import { useAuth } from './contexts/useAuth';
 import { Landing } from './pages/Landing';
 import { Auth } from './pages/Auth';
 import { Dashboard } from './pages/Dashboard';
-import { GalleryView } from './pages/GalleryView';
 import { DemoDashboard } from './pages/DemoDashboard';
-import { Gallery } from './lib/supabase';
+import { PublicGalleryPage } from './pages/PublicGalleryPage';
 
-type Screen = 'landing' | 'auth' | 'dashboard' | 'gallery' | 'demo';
+type Screen = 'landing' | 'auth' | 'dashboard' | 'demo';
 
 function AppInner() {
   const { user, loading } = useAuth();
-  const [screen, setScreen] = useState<Screen>('demo');
-  const [activeGallery, setActiveGallery] = useState<Gallery | null>(null);
+  const [screen, setScreen] = useState<Screen>(initialScreen);
+  const publicSlug = publicGallerySlug();
+  const landingRoute = window.location.pathname === '/landing';
+
+  useEffect(() => {
+    if (user && window.location.pathname === '/auth') {
+      window.history.replaceState({}, '', '/');
+    }
+    if (user && screen === 'auth') {
+      setScreen('dashboard');
+    }
+  }, [user, screen]);
+
+  if (publicSlug) {
+    return <PublicGalleryPage slug={publicSlug} />;
+  }
 
   if (loading) {
     return (
@@ -25,32 +39,26 @@ function AppInner() {
     );
   }
 
-  // Demo mode — no auth required
-  if (screen === 'demo') {
+  if (landingRoute && screen === 'landing') {
     return (
-      <DemoDashboard
-        onSignUp={() => setScreen('auth')}
-        onBack={() => setScreen('landing')}
+      <Landing
+        onGetStarted={() => setScreen('auth')}
+        onTryDemo={() => setScreen('demo')}
       />
     );
   }
 
   // Authenticated flow
   if (user) {
-    if (screen === 'gallery' && activeGallery) {
-      return (
-        <GalleryView
-          gallery={activeGallery}
-          onBack={() => setScreen('dashboard')}
-        />
-      );
-    }
+    return <Dashboard />;
+  }
+
+  // Demo mode — no auth required
+  if (screen === 'demo') {
     return (
-      <Dashboard
-        onOpenGallery={(gallery) => {
-          setActiveGallery(gallery);
-          setScreen('gallery');
-        }}
+      <DemoDashboard
+        onSignUp={() => setScreen('auth')}
+        onBack={() => setScreen('landing')}
       />
     );
   }
@@ -67,6 +75,19 @@ function AppInner() {
       onTryDemo={() => setScreen('demo')}
     />
   );
+}
+
+function initialScreen(): Screen {
+  if (window.location.pathname === '/landing') return 'landing';
+  if (window.location.pathname === '/auth') return 'auth';
+  if (window.location.search.includes('auth=true')) return 'auth';
+  if (window.location.search.includes('demo=true')) return 'demo';
+  return 'landing';
+}
+
+function publicGallerySlug() {
+  const match = window.location.pathname.match(/^\/(?:g|gallery)\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : '';
 }
 
 export default function App() {

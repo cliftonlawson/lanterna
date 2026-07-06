@@ -1,0 +1,8 @@
+name = "lanterna"
+compatibility_date = "2026-07-01"
+pages_build_output_dir = "dist"
+
+[vars]
+APP_URL = "http://127.0.0.1:5173"
+PUBLIC_DELIVERY_BASE_URL = "https://deliver.lanterna.film"
+EMAIL_PROVIDER = "mock"
