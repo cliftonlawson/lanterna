@@ -65,6 +65,10 @@ Done when: the happy path and the three failure paths all behave, documented in 
 Add files with a real video and poster, Replace video with a >200 MB file (proves the tus path), Replace thumbnail with JPG/PNG/WebP. Run `npm run smoke:gallery` after each.
 Done when: all three pass by hand.
 
+### 4a. Email deliverability: Lanterna sending domain
+Lanterna delivery email now sends through Resend, but the first real item 4 delivery to `team@hellobower.com` landed in spam. Verify `lanterna.video` as the production sending domain and complete the deliverability pass before launch: SPF/DKIM/DMARC alignment, production from/reply-to, and inbox placement against Gmail and Outlook.
+Done when: `lanterna.video` is verified in Resend, DNS is documented, production from/reply-to are configured, and test deliveries land in the inbox for Gmail and Outlook.
+
 ### 11. Production origins and access review
 Finalize Cloudflare allowed origins for the production domain (not just 127.0.0.1), and do the password/private access review the packet defers: confirm password galleries actually gate, private galleries are unreachable publicly, and signed URL TTLs are short. Decide whether private galleries should 404 publicly instead of 403, since 403 confirms existence.
 Done when: reviewed against the SOP's access-control section with findings written down.

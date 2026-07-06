@@ -6,7 +6,6 @@ import {
   completeUpload,
   createBackgroundUploadSlot,
   createUploadSlot,
-  notifyDeliveryRecipients,
   postFileToStream,
   processUploadedVideos,
   putFileToR2,
@@ -26,7 +25,6 @@ import {
 import { invalidRecipientEmails, parseRecipientEmails } from './lanterna-dashboard/delivery';
 import { GalleryStudioScreen } from './lanterna-dashboard/GalleryStudioScreen';
 import { NewGalleryModal } from './lanterna-dashboard/NewGalleryModal';
-import { publicGalleryUrl } from './lanterna-dashboard/publicLinks';
 import { UploadScreen } from './lanterna-dashboard/UploadScreen';
 import { VendorDashboardScreen } from './lanterna-dashboard/VendorDashboardScreen';
 import { VideoDrawer } from './lanterna-dashboard/VideoDrawer';
@@ -265,13 +263,11 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       return;
     }
 
-    const recipients = parseRecipientEmails(activeGallery.deliveryDraft.recipients);
-    const deliveryLink = publicGalleryUrl(workspace.customDomain ?? 'deliver.lanterna.studio', activeGallery.slug);
     try {
       const deliveryResult = await deliverGallery(activeGallery);
 
       commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? deliveryResult.gallery : gallery), 'delivery');
-      void notifyDeliveryRecipients({ deliveryLink, gallery: activeGallery, recipients, workspace });
+      const recipients = parseRecipientEmails(activeGallery.deliveryDraft.recipients);
       showToast(deliveryResult.mode === 'supabase' ? 'Delivery sent' : `Delivery saved locally (${recipients.length})`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Delivery blocked');

@@ -232,7 +232,7 @@ delivery_recipients             -- one row per recipient per delivery
   gallery_id         uuid fk -> galleries.id   -- denormalized for direct gallery queries
   email              text
   name               text null
-  status             recipient_status        -- sent | opened   (denormalized current state)
+  status             recipient_status        -- sent | opened | failed   (denormalized current state)
   last_sent_at       timestamptz             -- updated on resend
   first_opened_at    timestamptz null
   created_at         timestamptz default now()
@@ -244,7 +244,7 @@ delivery_events                 -- immutable; source of truth, powers per-film s
   gallery_id         uuid fk -> galleries.id
   recipient_id       uuid null fk -> delivery_recipients.id
   video_id           uuid null fk -> videos.id
-  event_type         delivery_event_type     -- sent | opened | video_viewed | downloaded
+  event_type         delivery_event_type     -- sent | failed | opened | video_viewed | downloaded
   occurred_at        timestamptz default now()
   metadata           jsonb null
   index (gallery_id, occurred_at)
@@ -381,8 +381,8 @@ storage_tier         = hot | web | cold | archived | purged
 background_type      = image | video
 invite_status        = pending | accepted | revoked | expired
 processing_status    = uploading | processing | ready | errored
-recipient_status     = sent | opened
-delivery_event_type  = sent | opened | video_viewed | downloaded
+recipient_status     = sent | opened | failed
+delivery_event_type  = sent | failed | opened | video_viewed | downloaded
 plan_tier            = starter | pro | studio
 sub_status           = active | past_due | canceled
 entitlement_source   = subscription | block | topup
