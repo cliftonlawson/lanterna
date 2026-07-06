@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import { recordGalleryDelivery } from './appApi';
 import { parseRecipientEmails, upsertSentRecipients } from './delivery';
 import {
   loadStoredGalleries,
@@ -174,12 +175,15 @@ async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: strin
     cover_video_id: null,
     cover_photo_id: null,
   };
+  const galleryWrite = Object.fromEntries(
+    Object.entries(galleryWithoutDeferredMediaRefs).filter(([key]) => key !== 'status'),
+  );
   const designWithoutDeferredMediaRefs = {
     ...bundle.design,
     featured_video_id: null,
   };
 
-  const { error: galleryError } = await supabase.from('galleries').upsert(galleryWithoutDeferredMediaRefs);
+  const { error: galleryError } = await supabase.from('galleries').upsert(galleryWrite);
   if (galleryError) throw galleryError;
 
   if (bundle.albums.length) {
@@ -591,58 +595,19 @@ export async function deliverGallery(gallery: DashboardGallery): Promise<Deliver
   }
 
   try {
-    const sentBy = await currentUserId();
-    if (!sentBy) throw new Error('Supabase session is missing.');
-
     const accountId = await currentAccountId();
     if (!accountId) throw new Error('Supabase account membership is missing.');
 
-    await saveGalleryToSupabase(deliveredGallery, accountId);
-
-    const galleryId = gallery.id;
-    const deliveryId = crypto.randomUUID();
-    const { error: deliveryError } = await supabase.from('deliveries').insert({
-      id: deliveryId,
-      gallery_id: galleryId,
-      message: gallery.deliveryDraft.message || null,
-      sent_by: sentBy,
+    await saveGalleryToSupabase(gallery, accountId);
+    await recordGalleryDelivery({
+      galleryId: gallery.id,
+      message: gallery.deliveryDraft.message,
+      recipients,
     });
-    if (deliveryError) throw deliveryError;
-
-    const recipientRows = recipients.map((email) => ({
-      id: crypto.randomUUID(),
-      delivery_id: deliveryId,
-      gallery_id: galleryId,
-      email,
-      name: null,
-      status: 'sent' as const,
-      last_sent_at: new Date().toISOString(),
-    }));
-
-    if (recipientRows.length) {
-      const { error: recipientError } = await supabase.from('delivery_recipients').insert(recipientRows);
-      if (recipientError) throw recipientError;
-
-      const { error: eventError } = await supabase.from('delivery_events').insert(recipientRows.map((recipient) => ({
-        id: crypto.randomUUID(),
-        gallery_id: galleryId,
-        recipient_id: recipient.id,
-        video_id: null,
-        event_type: 'sent' as const,
-        metadata: { delivery_id: deliveryId },
-      })));
-      if (eventError) throw eventError;
-    }
 
     return { mode: 'supabase', ok: true, gallery: deliveredGallery, recipients };
   } catch (error) {
-    console.warn('Lanterna delivery stayed local because Supabase delivery failed', error);
-    return {
-      mode: 'local',
-      ok: true,
-      reason: error instanceof Error ? error.message : 'Supabase delivery failed',
-      gallery: deliveredGallery,
-      recipients,
-    };
+    console.warn('Lanterna delivery failed server preflight or persistence', error);
+    throw error;
   }
 }

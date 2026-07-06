@@ -69,6 +69,20 @@ export async function notifyDeliveryRecipients({ deliveryLink, gallery, recipien
   });
 }
 
+export async function publishGallery(galleryId: string) {
+  return postApi<{ gallery: { id: string; status: 'published' | 'delivered' }; ok: boolean }>('/api/gallery/publish', {
+    galleryId,
+  });
+}
+
+export async function recordGalleryDelivery(input: {
+  galleryId: string;
+  message: string;
+  recipients: string[];
+}) {
+  return postApi<{ deliveryId: string; gallery: { id: string; status: 'delivered' }; ok: boolean }>('/api/delivery/record', input);
+}
+
 type UploadTargetType = 'video' | 'photo';
 
 type CreateUploadSlotInput = {

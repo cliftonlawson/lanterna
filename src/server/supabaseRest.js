@@ -68,7 +68,7 @@ export async function accountForUser(env, userId, fetchImpl = fetch) {
 export async function assertGalleryMembership(env, accountId, galleryId, fetchImpl = fetch) {
   const rows = await supabaseRest(
     env,
-    `galleries?select=id,slug,name,access_type,password_hash,status,account_id&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(galleryId)}&limit=1`,
+    `galleries?select=id,slug,name,access_type,password_hash,status,account_id,cover_video_id,cover_photo_id&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(galleryId)}&limit=1`,
     { headers: { accept: 'application/json' } },
     fetchImpl,
   );
