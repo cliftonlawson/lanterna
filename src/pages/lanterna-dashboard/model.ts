@@ -111,6 +111,7 @@ export type GalleryDesign = {
 
 export type DashboardGallery = {
   id: string;
+  slug: string;
   name: string;
   client: string;
   date: string;

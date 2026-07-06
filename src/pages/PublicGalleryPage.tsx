@@ -432,6 +432,7 @@ function publicPayloadToDashboardGallery(payload: PublicGalleryPayload): Dashboa
     design,
     gradient: design.backgroundGradient,
     id: payload.gallery.slug,
+    slug: payload.gallery.slug,
     name: payload.gallery.name,
     passwordSet: payload.gallery.accessType === 'password',
     photoItems: payload.gallery.photos.map((photo, index) => ({

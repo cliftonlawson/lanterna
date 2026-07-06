@@ -139,7 +139,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onGalleryChan
   };
 
   const copyGalleryLink = () => {
-    void navigator.clipboard?.writeText(publicGalleryUrl(publicGalleryBase, gallery.id));
+    void navigator.clipboard?.writeText(publicGalleryUrl(publicGalleryBase, gallery.slug));
     onShowToast('Gallery link copied');
   };
 

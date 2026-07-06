@@ -213,8 +213,10 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     const name = String(data.get('name') || 'Untitled gallery');
     const project = String(data.get('project') || 'Weddings') as DashboardGallery['project'];
     const access = String(data.get('access') || 'Private') as DashboardGallery['access'];
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `gallery-${Date.now()}`;
     const gallery: DashboardGallery = {
-      id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `gallery-${Date.now()}`,
+      id: crypto.randomUUID(),
+      slug,
       name,
       client: String(data.get('client') || name),
       date: String(data.get('date') || 'Just now'),
@@ -264,7 +266,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     }
 
     const recipients = parseRecipientEmails(activeGallery.deliveryDraft.recipients);
-    const deliveryLink = publicGalleryUrl(workspace.customDomain ?? 'deliver.lanterna.studio', activeGallery.id);
+    const deliveryLink = publicGalleryUrl(workspace.customDomain ?? 'deliver.lanterna.studio', activeGallery.slug);
     const deliveryResult = await deliverGallery(activeGallery);
 
     commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? deliveryResult.gallery : gallery), 'delivery');

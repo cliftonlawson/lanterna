@@ -1344,7 +1344,7 @@ function SettingsTab({
       <Panel title="Gallery details">
         <label>Gallery name<input value={activeGallery.name} onChange={(event) => onGalleryChange({ name: event.target.value })} /></label>
         <label>Client name<input value={activeGallery.client} onChange={(event) => onGalleryChange({ client: event.target.value })} /></label>
-        <label>Gallery link<div className="readonly"><Link2 size={15} /> {customDomain}/{activeGallery.id}</div></label>
+        <label>Gallery link<div className="readonly"><Link2 size={15} /> {customDomain}/{activeGallery.slug}</div></label>
       </Panel>
       <Panel title="Access">
         <div className="segmented wide">
@@ -1389,9 +1389,9 @@ function DeliverTab({
 }) {
   const deliveryReady = preflight.every((item) => item.ok);
   const customDomain = workspace.customDomain ?? 'deliver.lanterna.studio';
-  const deliveryLink = publicGalleryDisplayUrl(customDomain, activeGallery.id);
+  const deliveryLink = publicGalleryDisplayUrl(customDomain, activeGallery.slug);
   const copyDeliveryLink = () => {
-    void navigator.clipboard?.writeText(publicGalleryUrl(customDomain, activeGallery.id));
+    void navigator.clipboard?.writeText(publicGalleryUrl(customDomain, activeGallery.slug));
     onShowToast('Copied link');
   };
 

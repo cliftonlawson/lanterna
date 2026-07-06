@@ -1,6 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import type { DashboardGallery, WorkspaceAccount } from './model';
-import { galleryDatabaseId, photoDatabaseId, videoDatabaseId } from './schemaMapper';
+import { photoDatabaseId, videoDatabaseId } from './schemaMapper';
 
 type NotifyDeliveryInput = {
   deliveryLink: string;
@@ -61,7 +61,7 @@ export async function notifyDeliveryRecipients({ deliveryLink, gallery, recipien
 
   return postOptionalApi('/api/delivery/notify', {
     deliveryLink,
-    galleryId: galleryDatabaseId(gallery.id),
+    galleryId: gallery.id,
     message: gallery.deliveryDraft.message,
     recipients,
     subject: `${gallery.name} is ready`,
@@ -105,7 +105,7 @@ export async function createUploadSlot(input: CreateUploadSlotInput) {
     bytesTotal: input.bytesTotal,
     contentType: input.contentType,
     fileName: input.fileName,
-    galleryId: galleryDatabaseId(input.galleryId),
+    galleryId: input.galleryId,
     targetId,
     targetType: input.targetType,
   });
@@ -127,7 +127,7 @@ export async function completeUpload(input: CompleteUploadInput) {
 
   return postApi<{ ok: boolean }>('/api/upload/complete', {
     bytes: input.bytes,
-    galleryId: galleryDatabaseId(input.galleryId),
+    galleryId: input.galleryId,
     r2Key: input.r2Key,
     stageReplacement: input.stageReplacement,
     streamUid: input.streamUid,
@@ -139,7 +139,7 @@ export async function completeUpload(input: CompleteUploadInput) {
 
 export async function processUploadedVideos(galleryId: string, videoId?: string) {
   return postApi<{ checked: number; pending: number; processed: number; processedVideoIds: string[] }>('/api/media/process-ready', {
-    galleryId: galleryDatabaseId(galleryId),
+    galleryId,
     videoId: videoId ? videoDatabaseId(videoId) : undefined,
   });
 }
@@ -157,7 +157,7 @@ export async function createBackgroundUploadSlot(input: {
   return postApi<BackgroundSlotResponse>('/api/background/slot', {
     contentType: input.contentType,
     fileName: input.fileName,
-    galleryId: galleryDatabaseId(input.galleryId),
+    galleryId: input.galleryId,
   });
 }
 
@@ -168,7 +168,7 @@ export async function completeBackgroundUpload(input: {
 }) {
   return postApi<{ ok: boolean; r2Key: string }>('/api/background/complete', {
     bytes: input.bytes,
-    galleryId: galleryDatabaseId(input.galleryId),
+    galleryId: input.galleryId,
     r2Key: input.r2Key,
   });
 }
@@ -182,7 +182,7 @@ export async function createPosterUploadSlot(input: {
   return postApi<BackgroundSlotResponse & { videoId: string }>('/api/poster/slot', {
     contentType: input.contentType,
     fileName: input.fileName,
-    galleryId: galleryDatabaseId(input.galleryId),
+    galleryId: input.galleryId,
     videoId: videoDatabaseId(input.videoId),
   });
 }
@@ -195,7 +195,7 @@ export async function completePosterUpload(input: {
 }) {
   return postApi<{ ok: boolean; r2Key: string }>('/api/poster/complete', {
     bytes: input.bytes,
-    galleryId: galleryDatabaseId(input.galleryId),
+    galleryId: input.galleryId,
     r2Key: input.r2Key,
     videoId: videoDatabaseId(input.videoId),
   });
@@ -207,7 +207,7 @@ export async function capturePosterFrame(input: {
   videoId: string;
 }) {
   return postApi<{ media: Record<string, SignedMediaUrl>; ok: boolean; posterUrl: string; r2Key: string }>('/api/poster/capture-frame', {
-    galleryId: galleryDatabaseId(input.galleryId),
+    galleryId: input.galleryId,
     timeSeconds: input.timeSeconds,
     videoId: videoDatabaseId(input.videoId),
   });
@@ -247,7 +247,7 @@ export async function getStreamPlayback(galleryId: string, streamUids: string[])
   if (!uniqueStreamUids.length) return {};
 
   const payload = await postApi<{ playback: Record<string, SignedStreamPlayback> }>('/api/stream/playback', {
-    galleryId: galleryDatabaseId(galleryId),
+    galleryId,
     streamUids: uniqueStreamUids,
   });
 

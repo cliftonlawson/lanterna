@@ -10,6 +10,7 @@ type Props = {
 export function VendorDashboardScreen({ workspace, onWorkspaceChange }: Props) {
   const previewGallery: DashboardGallery = {
     id: 'brand-preview',
+    slug: 'brand-preview',
     name: 'Client Gallery',
     client: 'Client',
     date: 'Just now',

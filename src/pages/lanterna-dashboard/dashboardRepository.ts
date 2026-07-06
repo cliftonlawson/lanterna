@@ -11,7 +11,6 @@ import {
 import { defaultDeliveryDraft, defaultWorkspaceAccount, type DashboardGallery, type UploadJob, type WorkspaceAccount } from './model';
 import {
   canPersistGalleryToSchema,
-  galleryDatabaseId,
   galleryToSchemaBundle,
   photoDatabaseId,
   schemaBundleToGallery,
@@ -426,14 +425,6 @@ export async function loadUploadJobs() {
 
     if (error) throw error;
 
-    const galleryIds = [...new Set((data ?? []).map((job) => job.gallery_id))];
-    const { data: galleryRows, error: galleryError } = galleryIds.length
-      ? await supabase.from('galleries').select('id,slug').in('id', galleryIds)
-      : { data: [], error: null };
-
-    if (galleryError) throw galleryError;
-
-    const gallerySlugById = new Map((galleryRows ?? []).map((gallery) => [gallery.id, gallery.slug]));
     const videoIds = [...new Set((data ?? []).filter((job) => job.target_type === 'video' && job.target_id).map((job) => job.target_id))];
     const photoIds = [...new Set((data ?? []).filter((job) => job.target_type === 'photo' && job.target_id).map((job) => job.target_id))];
     const [videosResult, photosResult] = await Promise.all([
@@ -465,7 +456,7 @@ export async function loadUploadJobs() {
       return true;
     }).map((job) => ({
       id: job.id,
-      galleryId: gallerySlugById.get(job.gallery_id) ?? job.gallery_id,
+      galleryId: job.gallery_id,
       targetType: job.target_type,
       targetId: job.target_id,
       fileName: job.target_type === 'video' && job.target_id
@@ -497,7 +488,7 @@ export async function saveUploadJobs(jobs: UploadJob[]): Promise<UploadJobResult
     const { error } = await supabase.from('upload_jobs').upsert(jobs.map((job) => ({
       id: job.id,
       account_id: accountId,
-      gallery_id: galleryDatabaseId(job.galleryId),
+      gallery_id: job.galleryId,
       target_type: job.targetType,
       target_id: job.targetId ? (job.targetType === 'video' ? videoDatabaseId(job.targetId) : photoDatabaseId(job.targetId)) : null,
       status: job.status,
@@ -528,7 +519,7 @@ export async function clearUploadJob(job: UploadJob): Promise<SaveResult> {
 
     if (job.targetId) {
       query = query
-        .eq('gallery_id', galleryDatabaseId(job.galleryId))
+        .eq('gallery_id', job.galleryId)
         .eq('target_type', job.targetType)
         .eq('target_id', job.targetType === 'video' ? videoDatabaseId(job.targetId) : photoDatabaseId(job.targetId));
     } else {
@@ -556,7 +547,7 @@ export async function recordUploadUsage(galleryId: string, bytes: number): Promi
     const { error } = await supabase.from('usage_events').insert({
       account_id: accountId,
       gb,
-      gallery_id: galleryDatabaseId(galleryId),
+      gallery_id: galleryId,
     });
 
     if (error) throw error;
@@ -608,7 +599,7 @@ export async function deliverGallery(gallery: DashboardGallery): Promise<Deliver
 
     await saveGalleryToSupabase(deliveredGallery, accountId);
 
-    const galleryId = galleryDatabaseId(gallery.id);
+    const galleryId = gallery.id;
     const deliveryId = crypto.randomUUID();
     const { error: deliveryError } = await supabase.from('deliveries').insert({
       id: deliveryId,

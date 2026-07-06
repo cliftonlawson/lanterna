@@ -169,10 +169,6 @@ function stableUuid(value: string) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16)}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
 }
 
-export function galleryDatabaseId(galleryId: string) {
-  return stableUuid(`gallery:${galleryId}`);
-}
-
 export function videoDatabaseId(videoId: string) {
   if (uuidPattern.test(videoId)) return videoId;
   return stableUuid(`video:${videoId}`);
@@ -229,7 +225,7 @@ export function canPersistGalleryToSchema(gallery: DashboardGallery) {
 }
 
 export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: string): GallerySchemaBundle {
-  const galleryId = galleryDatabaseId(gallery.id);
+  const galleryId = gallery.id;
   const featuredVideo = gallery.videoItems.find((video) => video.title === gallery.design.featuredFilm) ?? gallery.videoItems[0];
   const coverVideo = gallery.coverChosen ? (featuredVideo ?? gallery.videoItems[0]) : null;
   const coverPhoto = gallery.coverChosen ? gallery.photoItems[0] : null;
@@ -242,9 +238,9 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       client_name: gallery.client,
       event_date: schemaDateFromDisplay(gallery.date),
       project_type: projectMap[gallery.project],
-      slug: gallery.id,
+      slug: gallery.slug,
       access_type: accessMap[gallery.access],
-      password_hash: gallery.access === 'Password' && gallery.passwordSet ? (gallery.passwordHash ?? `ui-configured:${gallery.id}`) : null,
+      password_hash: gallery.access === 'Password' && gallery.passwordSet ? (gallery.passwordHash ?? `ui-configured:${gallery.slug}`) : null,
       status: gallery.status,
       cover_video_id: coverVideo ? videoDatabaseId(coverVideo.id) : null,
       cover_photo_id: coverPhoto ? photoDatabaseId(coverPhoto.id) : null,
@@ -361,7 +357,8 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
   };
 
   return {
-    id: slug,
+    id: bundle.gallery.id,
+    slug,
     name: bundle.gallery.name,
     client: bundle.gallery.client_name ?? bundle.gallery.name,
     date: bundle.gallery.event_date ? shortDate(bundle.gallery.event_date) : 'Just now',
