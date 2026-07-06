@@ -30,6 +30,54 @@ async function requireAccountContext(request, env) {
   return { accountId, user };
 }
 
+async function galleryPreflight(env, gallery) {
+  if (!['public', 'password', 'private'].includes(gallery.access_type)) {
+    return { code: 'access_required', message: 'Choose gallery access before publishing.' };
+  }
+
+  if (gallery.access_type === 'password' && !gallery.password_hash) {
+    return { code: 'password_required', message: 'Set a gallery password before publishing.' };
+  }
+
+  const videos = await supabaseRest(
+    env,
+    `videos?select=id&gallery_id=eq.${encodeURIComponent(gallery.id)}&deleted_at=is.null&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  if (!videos?.[0]) return { code: 'video_required', message: 'Add at least one film before publishing.' };
+
+  if (!gallery.cover_video_id && !gallery.cover_photo_id) {
+    return { code: 'cover_required', message: 'Choose a cover before publishing.' };
+  }
+
+  return null;
+}
+
+async function requireGalleryPreflight(env, gallery) {
+  const failure = await galleryPreflight(env, gallery);
+  if (!failure) return null;
+  return errorJson(failure.message, 422, { code: failure.code });
+}
+
+async function publishGallery(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const preflightError = await requireGalleryPreflight(env, gallery);
+  if (preflightError) return preflightError;
+
+  if (gallery.status !== 'delivered') {
+    await supabaseRest(env, `galleries?id=eq.${encodeURIComponent(gallery.id)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'published' }),
+    });
+  }
+
+  return json({ gallery: { id: gallery.id, status: gallery.status === 'delivered' ? 'delivered' : 'published' }, ok: true });
+}
+
 async function uploadSlot(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
@@ -689,6 +737,64 @@ async function deliveryNotify(request, env) {
   return json({ emails, ok: true });
 }
 
+async function deliveryRecord(request, env) {
+  const body = await readJson(request);
+  const { accountId, user } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const preflightError = await requireGalleryPreflight(env, gallery);
+  if (preflightError) return preflightError;
+
+  const recipients = Array.isArray(body.recipients)
+    ? body.recipients.map((recipient) => String(recipient || '').trim()).filter(Boolean)
+    : [];
+  const deliveryId = crypto.randomUUID();
+
+  await supabaseRest(env, 'deliveries', {
+    method: 'POST',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({
+      gallery_id: gallery.id,
+      id: deliveryId,
+      message: String(body.message || '').trim() || null,
+      sent_by: user.id,
+    }),
+  });
+
+  const recipientRows = recipients.map((email) => ({
+    delivery_id: deliveryId,
+    email,
+    gallery_id: gallery.id,
+    id: crypto.randomUUID(),
+    name: null,
+    status: 'sent',
+    last_sent_at: new Date().toISOString(),
+  }));
+
+  if (recipientRows.length) {
+    await supabaseRest(env, 'delivery_recipients', {
+      method: 'POST',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify(recipientRows),
+    });
+
+    await supabaseRest(env, 'delivery_events', {
+      method: 'POST',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify(recipientRows.map((recipient) => ({
+        event_type: 'sent',
+        gallery_id: gallery.id,
+        id: crypto.randomUUID(),
+        metadata: { delivery_id: deliveryId },
+        recipient_id: recipient.id,
+        video_id: null,
+      }))),
+    });
+  }
+
+  return json({ deliveryId, gallery: { id: gallery.id, status: 'delivered' }, ok: true });
+}
+
 async function publicGallery(request, env, slug) {
   const gallery = await publicGalleryBySlug(env, slug);
   if (!gallery) return errorJson('Gallery not found.', 404);
@@ -731,6 +837,8 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'poster/capture-frame') return await posterCaptureFrame(request, env);
     if (request.method === 'POST' && path === 'media/urls') return await mediaUrls(request, env);
     if (request.method === 'POST' && path === 'stream/playback') return await streamPlayback(request, env);
+    if (request.method === 'POST' && path === 'gallery/publish') return await publishGallery(request, env);
+    if (request.method === 'POST' && path === 'delivery/record') return await deliveryRecord(request, env);
     if (request.method === 'POST' && path === 'delivery/notify') return await deliveryNotify(request, env);
     if (request.method === 'POST' && path === 'stripe/webhook') return await stripeWebhook(request, env);
     if (request.method === 'GET' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/session')) return await paidUnlockSession(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/session$/, ''));

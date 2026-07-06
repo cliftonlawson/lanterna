@@ -267,11 +267,15 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
     const recipients = parseRecipientEmails(activeGallery.deliveryDraft.recipients);
     const deliveryLink = publicGalleryUrl(workspace.customDomain ?? 'deliver.lanterna.studio', activeGallery.slug);
-    const deliveryResult = await deliverGallery(activeGallery);
+    try {
+      const deliveryResult = await deliverGallery(activeGallery);
 
-    commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? deliveryResult.gallery : gallery), 'delivery');
-    void notifyDeliveryRecipients({ deliveryLink, gallery: activeGallery, recipients, workspace });
-    showToast(deliveryResult.mode === 'supabase' ? 'Delivery sent' : `Delivery saved locally (${recipients.length})`);
+      commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? deliveryResult.gallery : gallery), 'delivery');
+      void notifyDeliveryRecipients({ deliveryLink, gallery: activeGallery, recipients, workspace });
+      showToast(deliveryResult.mode === 'supabase' ? 'Delivery sent' : `Delivery saved locally (${recipients.length})`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Delivery blocked');
+    }
   };
 
   const addFilesToGallery = async (fileList: FileList) => {
