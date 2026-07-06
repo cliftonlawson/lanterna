@@ -150,7 +150,7 @@ function streamUploadMetadata(input = {}, env = {}) {
     .map(([key, value]) => `${key} ${btoa(String(value))}`);
 
   const origins = streamAllowedOrigins(env);
-  if (origins.length) entries.push(`allowedorigins ${btoa(JSON.stringify(origins))}`);
+  if (origins.length) entries.push(`allowedorigins ${btoa(origins.join(','))}`);
   entries.push('requiresignedurls');
   return entries.join(',');
 }

@@ -14,6 +14,7 @@ Done when: a draft gallery 404s publicly, publish flips it live, and the smoke t
 
 ### 1a. Published videos must all have valid playback assets
 Found during item 1 verification: after `/g/test` was properly published, `npm run smoke:gallery -- test` picked `AD VIDEO HD 1080p` and the Stream iframe returned `500`, while the newer titled smoke fixture passed. A published gallery should not expose a ready video whose playback URL fails. Decide whether the bad row should be repaired, hidden, or treated as not-ready, then make the smoke check catch every visible ready public video instead of only one target.
+Root cause found in item 1a: the old video was uploaded through the TUS path with malformed Cloudflare `allowedorigins` metadata (`["127.0.0.1:5173"` / `"localhost:5173"]` as literal origin strings); fix the TUS metadata format and include a production checklist scan/backfill for pre-fix Stream assets in item 11.
 Done when: every visible ready video in the published smoke gallery has a working playback path or is excluded from the public payload for a clear server-side reason.
 
 ### 2. Kill slug-to-ID derivation
