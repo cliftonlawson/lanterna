@@ -80,7 +80,7 @@ export async function assertGalleryMembership(env, accountId, galleryId, fetchIm
 export async function publicGalleryBySlug(env, slug, fetchImpl = fetch) {
   const rows = await supabaseRest(
     env,
-    `galleries?select=id,account_id,slug,name,client_name,event_date,access_type,password_hash,status,source_file_expires_at,access_expires_at,storage_tier,is_extended,extended_until,cover_video_id,cover_photo_id&slug=eq.${encodeURIComponent(slug)}&deleted_at=is.null&limit=1`,
+    `galleries?select=id,account_id,slug,name,client_name,event_date,access_type,password_hash,status,source_file_expires_at,access_expires_at,storage_tier,is_extended,extended_until,cover_video_id,cover_photo_id,archived_at,deleted_at&slug=eq.${encodeURIComponent(slug)}&deleted_at=is.null&limit=1`,
     { headers: { accept: 'application/json' } },
     fetchImpl,
   );
