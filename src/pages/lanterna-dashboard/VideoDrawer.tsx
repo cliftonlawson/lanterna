@@ -267,7 +267,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
       if (streamUpload) {
         setReplaceStage('processing');
         const ready = await waitForReplacementReady(gallery.id, video.id);
-        if (!ready) throw new Error('Replacement is still processing. Try Finish processing in a minute.');
+        if (!ready) throw new Error('Replacement is still processing. Leave this drawer open or check back in a minute.');
       }
 
       updateVideo({

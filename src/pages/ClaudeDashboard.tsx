@@ -150,7 +150,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         if (result.errored > 0) showToast('Video processing failed');
         else if (result.processed > 0) showToast('Video is ready');
       } catch {
-        // Keep this quiet; the manual "Finish processing" action still surfaces errors.
+        // Keep this quiet; the upload queue keeps polling until processing finishes or fails.
       } finally {
         inFlight = false;
       }
@@ -549,78 +549,6 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     void saveDashboardGalleries(updatedGalleries, 'upload');
   };
 
-  const finishProcessing = async () => {
-    if (!activeGallery) return;
-    try {
-      const result = await processUploadedVideos(activeGallery.id);
-      if (result.processed === 0) {
-        const refreshedGalleries = await loadDashboardGalleries();
-        const refreshedActive = refreshedGalleries.find((gallery) => gallery.id === activeGallery.id);
-        if (refreshedActive) {
-          setGalleries(refreshedGalleries);
-          setActiveId(refreshedActive.id);
-          await saveDashboardGalleries(refreshedGalleries, 'upload');
-        }
-
-        const localProcessingJobs = uploadJobs.filter((job) => galleryVideoJobNeedsProcessing(job, activeGallery.id));
-        if (result.errored > 0) {
-          const erroredVideoIds = new Set(result.erroredVideoIds ?? []);
-          const updatedJobs = uploadJobs.map((job) => galleryVideoJobNeedsProcessing(job, activeGallery.id)
-            && job.targetId
-            && erroredVideoIds.has(job.targetId)
-            ? { ...job, errorMessage: 'Video processing failed', status: 'errored' as const }
-            : job);
-          setUploadJobs(updatedJobs);
-          await saveUploadJobs(updatedJobs);
-          showToast('Video processing failed');
-          return;
-        }
-
-        if (result.pending > 0) {
-          showToast('Cloudflare is still processing that video');
-          return;
-        }
-
-        if (localProcessingJobs.length > 0 && refreshedActive?.videoItems.some((video) => video.processingStatus === 'ready' && video.streamUid)) {
-          const updatedJobs = uploadJobs.map((job) => galleryVideoJobNeedsProcessing(job, activeGallery.id)
-            ? { ...job, status: 'complete' as const, bytesUploaded: job.bytesTotal }
-            : job);
-          setUploadJobs(updatedJobs);
-          await saveUploadJobs(updatedJobs);
-          showToast('Video is ready');
-          return;
-        }
-
-        showToast('No processing videos found');
-        return;
-      }
-
-      const refreshedGalleries = await loadDashboardGalleries();
-      const refreshedActive = refreshedGalleries.find((gallery) => gallery.id === activeGallery.id);
-      if (refreshedActive) {
-        setGalleries(refreshedGalleries);
-        setActiveId(refreshedActive.id);
-        await saveDashboardGalleries(refreshedGalleries, 'upload');
-      }
-
-      const processedVideoIds = new Set(result.processedVideoIds ?? []);
-      const erroredVideoIds = new Set(result.erroredVideoIds ?? []);
-      const updatedJobs = uploadJobs.map((job) => galleryVideoJobNeedsProcessing(job, activeGallery.id)
-        && job.targetId
-        ? processedVideoIds.has(job.targetId)
-          ? { ...job, status: 'complete' as const, bytesUploaded: job.bytesTotal }
-          : erroredVideoIds.has(job.targetId)
-            ? { ...job, errorMessage: 'Video processing failed', status: 'errored' as const }
-            : job
-        : job);
-      setUploadJobs(updatedJobs);
-      await saveUploadJobs(updatedJobs);
-      showToast(result.errored > 0 ? 'Video processing failed' : `${result.processed} ${result.processed === 1 ? 'video' : 'videos'} ready`);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Processing update failed');
-    }
-  };
-
   return (
     <AppShell
       galleries={galleries}
@@ -680,7 +608,6 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
             openGallery(activeGallery.id, 'videos');
             openVideoDetail(videoId);
           }}
-          onProcessReady={finishProcessing}
           onRemoveUploadJob={removeUploadJob}
           onToggleUploadJob={toggleUploadJob}
         />

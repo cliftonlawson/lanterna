@@ -12,10 +12,9 @@ type Props = {
   onAddFiles: (files: FileList) => void;
   onRemoveUploadJob: (jobId: string) => void;
   onToggleUploadJob: (jobId: string) => void;
-  onProcessReady: () => void;
 };
 
-export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGallery, onOpenVideoDetail, onAddFiles, onRemoveUploadJob, onToggleUploadJob, onProcessReady }: Props) {
+export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGallery, onOpenVideoDetail, onAddFiles, onRemoveUploadJob, onToggleUploadJob }: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const galleryJobs = uploadJobs.filter((job) => job.galleryId === activeGallery.id);
   const availableGb = Math.max(workspace.allowanceTotalGb - workspace.allowanceUsedGb, 0);
@@ -31,7 +30,6 @@ export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGalle
       <header className="studio-header">
         <div className="crumb"><button onClick={onOpenGallery}><ArrowLeft size={16} /> Back</button><strong>Uploading to {activeGallery.name}</strong></div>
         <div className="header-actions">
-          <button className="secondary" onClick={onProcessReady}>Finish processing</button>
           <button className="secondary" onClick={onOpenGallery}>Open gallery</button>
         </div>
       </header>
