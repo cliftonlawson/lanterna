@@ -170,6 +170,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onGalleryChan
     try {
       setPosterUploading(true);
       const slot = await createPosterUploadSlot({
+        bytesTotal: file.size,
         contentType: file.type || 'application/octet-stream',
         fileName: file.name,
         galleryId: gallery.id,

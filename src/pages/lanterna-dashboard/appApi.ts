@@ -122,11 +122,13 @@ type BackgroundSlotResponse = {
 };
 
 export async function createBackgroundUploadSlot(input: {
+  bytesTotal: number;
   contentType: string;
   fileName: string;
   galleryId: string;
 }) {
   return postApi<BackgroundSlotResponse>('/api/background/slot', {
+    bytesTotal: input.bytesTotal,
     contentType: input.contentType,
     fileName: input.fileName,
     galleryId: input.galleryId,
@@ -146,12 +148,14 @@ export async function completeBackgroundUpload(input: {
 }
 
 export async function createPosterUploadSlot(input: {
+  bytesTotal: number;
   contentType: string;
   fileName: string;
   galleryId: string;
   videoId: string;
 }) {
   return postApi<BackgroundSlotResponse & { videoId: string }>('/api/poster/slot', {
+    bytesTotal: input.bytesTotal,
     contentType: input.contentType,
     fileName: input.fileName,
     galleryId: input.galleryId,

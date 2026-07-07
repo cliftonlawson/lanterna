@@ -306,7 +306,7 @@ account_usage                   -- cached rollup; the dashboard reads this
 
 The two meters, made explicit:
 
-- **Flow meter** (`allowance_used_gb` vs `allowance_total_gb`): increments on every successful upload via a `usage_events` row, resets/recomputes per entitlement period, and **does not decrease when a gallery is deleted**. This is what the upload-slot Worker checks and what gates new uploads. This is what the customer is buying.
+- **Flow meter** (`allowance_used_gb` vs `allowance_total_gb`): increments on every successful upload via a server-written `usage_events` row, resets/recomputes per entitlement period, and **does not decrease when a gallery is deleted**. Authenticated clients can read usage, but cannot insert usage events directly. This is what the upload-slot Worker checks and what gates new uploads. This is what the customer is buying.
 - **Stock meter** (`hot_bytes_stored`, `cold_bytes_stored`, `stream_minutes_stored`): the real bytes and minutes, reconciled from Cloudflare on a schedule. This drives *your* cost and your cold-tiering decisions, not the customer's allowance.
 - **Launch deferral**: stock-meter reconciliation is post-launch. Do not enqueue `reconcile_usage` tasks until the Cloudflare reconciliation worker/admin command exists; the upload allowance gate uses the flow meter, not stock-meter reconciliation.
 
@@ -314,7 +314,8 @@ UI consequence (carry back to design): the dashboard label must read as **"uploa
 
 Upload gate logic (pseudocode):
 ```
-available = allowance_total_gb - allowance_used_gb
+reserved_gb = sum(upload_jobs.bytes_total where status in pending/uploading)
+available = allowance_total_gb - allowance_used_gb - reserved_gb
 if requested_gb > available: refuse slot, surface upgrade/block path
 else: issue upload slot, write usage_event on success
 ```
