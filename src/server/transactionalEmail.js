@@ -36,7 +36,7 @@ export function createDeliveryEmailPayload(env, { to, subject, text, html, reply
   if (!cleanHtml && !cleanText) throw new Error('An email body is required.');
 
   return {
-    from: env.EMAIL_FROM || env.RESEND_FROM_EMAIL || 'Lanterna <onboarding@resend.dev>',
+    from: env.EMAIL_FROM || env.RESEND_FROM_EMAIL || 'Lanterna <deliver@lanterna.video>',
     html: cleanHtml,
     reply_to: replyTo || env.EMAIL_REPLY_TO || undefined,
     subject: cleanSubject,

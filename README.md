@@ -94,8 +94,8 @@ CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
 CLOUDFLARE_STREAM_API_TOKEN=your-stream-api-token
 EMAIL_PROVIDER=resend
 EMAIL_PROVIDER_API_KEY=your-resend-api-key
-EMAIL_FROM="Lanterna <deliver@your-domain.com>"
-EMAIL_REPLY_TO=hello@your-domain.com
+EMAIL_FROM="Lanterna <deliver@lanterna.video>"
+EMAIL_REPLY_TO=team@hellobower.com
 PUBLIC_DELIVERY_BASE_URL=https://deliver.your-domain.com
 ```
 
