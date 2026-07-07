@@ -124,6 +124,12 @@ export async function processUploadedVideos(galleryId: string, videoId?: string)
   });
 }
 
+export async function clearUploadJobRemote(uploadJobId: string) {
+  return postApi<{ ok: boolean; uploadJobId: string }>('/api/upload/clear-job', {
+    uploadJobId,
+  });
+}
+
 type BackgroundSlotResponse = {
   galleryId: string;
   r2: UploadSlotResponse['r2'];

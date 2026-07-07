@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { recordGalleryDelivery } from './appApi';
+import { clearUploadJobRemote, recordGalleryDelivery } from './appApi';
 import { parseRecipientEmails, upsertSentRecipients } from './delivery';
 import {
   loadStoredGalleries,
@@ -126,9 +126,9 @@ function mergeLocalVideoMonetization(remote: DashboardGallery[], local: Dashboar
   });
 }
 
-function withoutPaidUnlockColumns(videos: VideoRecord[]) {
+function withoutPaidUnlockColumns<T extends Record<string, unknown>>(videos: T[]) {
   return videos.map((video) => {
-    const schemaVideo: Partial<VideoRecord> = { ...video };
+    const schemaVideo = { ...video };
     delete schemaVideo.paid_unlock_currency;
     delete schemaVideo.paid_unlock_enabled;
     delete schemaVideo.paid_unlock_label;
@@ -138,6 +138,36 @@ function withoutPaidUnlockColumns(videos: VideoRecord[]) {
 
     return schemaVideo;
   });
+}
+
+function editableVideoRows(videos: VideoRecord[]) {
+  return videos.map((video) => ({
+    id: video.id,
+    gallery_id: video.gallery_id,
+    title: video.title,
+    sort_order: video.sort_order,
+    duration_seconds: video.duration_seconds,
+    download_enabled: video.download_enabled,
+    visible_in_gallery: video.visible_in_gallery,
+    tags: video.tags,
+    paid_unlock_enabled: video.paid_unlock_enabled ?? false,
+    paid_unlock_price_cents: video.paid_unlock_price_cents ?? 30000,
+    paid_unlock_currency: video.paid_unlock_currency ?? 'usd',
+    paid_unlock_label: video.paid_unlock_label ?? null,
+    paid_unlock_tagline: video.paid_unlock_tagline ?? null,
+    paid_unlock_trailer: video.paid_unlock_trailer ?? true,
+  }));
+}
+
+function editablePhotoRows(photos: PhotoRecord[]) {
+  return photos.map((photo) => ({
+    id: photo.id,
+    gallery_id: photo.gallery_id,
+    album_id: photo.album_id,
+    sort_order: photo.sort_order,
+    width: photo.width,
+    height: photo.height,
+  }));
 }
 
 function isMissingPaidUnlockColumn(error: unknown) {
@@ -177,17 +207,17 @@ async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: strin
   }
 
   if (bundle.videos.length) {
-    const { error } = await supabase.from('videos').upsert(bundle.videos);
+    const { error } = await supabase.from('videos').upsert(editableVideoRows(bundle.videos));
     if (error) {
       if (!isMissingPaidUnlockColumn(error)) throw error;
 
-      const { error: retryError } = await supabase.from('videos').upsert(withoutPaidUnlockColumns(bundle.videos));
+      const { error: retryError } = await supabase.from('videos').upsert(withoutPaidUnlockColumns(editableVideoRows(bundle.videos)));
       if (retryError) throw retryError;
     }
   }
 
   if (bundle.photos.length) {
-    const { error } = await supabase.from('photos').upsert(bundle.photos);
+    const { error } = await supabase.from('photos').upsert(editablePhotoRows(bundle.photos));
     if (error) throw error;
   }
 
@@ -473,55 +503,14 @@ export async function loadUploadJobs() {
 export async function saveUploadJobs(jobs: UploadJob[]): Promise<UploadJobResult> {
   saveStoredUploadJobs(jobs);
 
-  if (!isSupabaseConfigured) return { mode: 'local', ok: true, jobs };
-
-  try {
-    const accountId = await currentAccountId();
-    if (!accountId) throw new Error('Supabase account membership is missing.');
-
-    const { error } = await supabase.from('upload_jobs').upsert(jobs.map((job) => ({
-      id: job.id,
-      account_id: accountId,
-      gallery_id: job.galleryId,
-      target_type: job.targetType,
-      target_id: job.targetId ? (job.targetType === 'video' ? videoDatabaseId(job.targetId) : photoDatabaseId(job.targetId)) : null,
-      status: job.status,
-      bytes_total: job.bytesTotal,
-      bytes_uploaded: job.bytesUploaded,
-    })));
-
-    if (error) throw error;
-
-    return { mode: 'supabase', ok: true, jobs };
-  } catch (error) {
-    console.warn('Lanterna upload jobs stayed local because Supabase save failed', error);
-    return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase upload job save failed', jobs };
-  }
+  return { mode: 'local', ok: true, jobs };
 }
 
 export async function clearUploadJob(job: UploadJob): Promise<SaveResult> {
   if (!isSupabaseConfigured) return { mode: 'local', ok: true };
 
   try {
-    const accountId = await currentAccountId();
-    if (!accountId) throw new Error('Supabase account membership is missing.');
-
-    let query = supabase
-      .from('upload_jobs')
-      .delete()
-      .eq('account_id', accountId);
-
-    if (job.targetId) {
-      query = query
-        .eq('gallery_id', job.galleryId)
-        .eq('target_type', job.targetType)
-        .eq('target_id', job.targetType === 'video' ? videoDatabaseId(job.targetId) : photoDatabaseId(job.targetId));
-    } else {
-      query = query.eq('id', job.id);
-    }
-
-    const { error } = await query;
-    if (error) throw error;
+    await clearUploadJobRemote(job.id);
 
     return { mode: 'supabase', ok: true };
   } catch (error) {
