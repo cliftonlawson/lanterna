@@ -10,6 +10,9 @@ const uploadTargetTypes = new Set(['video', 'photo']);
 const PUBLIC_STREAM_PLAYBACK_TTL_SECONDS = 21600;
 const STREAM_BASIC_POST_MAX_BYTES = 200 * 1024 * 1024;
 const DEFAULT_UPLOAD_ALLOWANCE_GB = 50;
+const DEFAULT_UPLOAD_JOB_STALE_MINUTES = 180;
+const STREAM_FAILED_STATES = new Set(['error', 'failed', 'failure', 'cancelled', 'canceled']);
+const STREAM_TERMINAL_ERROR_PATTERN = /not found|does not exist|invalid/i;
 
 function publicBaseUrl(env) {
   return String(env.PUBLIC_DELIVERY_BASE_URL || env.APP_URL || 'http://127.0.0.1:5173').replace(/\/+$/, '');
@@ -113,10 +116,36 @@ async function activeUploadReservationGb(env, accountId) {
   return (rows || []).reduce((sum, job) => sum + bytesToGb(job.bytes_total), 0);
 }
 
+async function expireStaleUploadJobs(env, accountId) {
+  const minutes = Number(env.UPLOAD_JOB_STALE_MINUTES || DEFAULT_UPLOAD_JOB_STALE_MINUTES);
+  if (!Number.isFinite(minutes) || minutes <= 0) return 0;
+
+  const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  const rows = await supabaseRest(
+    env,
+    `upload_jobs?select=id&account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading)&updated_at=lt.${encodeURIComponent(cutoff)}`,
+    { headers: { accept: 'application/json' } },
+  );
+  if (!rows?.length) return 0;
+
+  await supabaseRest(
+    env,
+    `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading)&updated_at=lt.${encodeURIComponent(cutoff)}`,
+    {
+      body: JSON.stringify({ status: 'errored' }),
+      headers: { prefer: 'return=minimal' },
+      method: 'PATCH',
+    },
+  );
+
+  return rows.length;
+}
+
 async function requireUploadAllowance(env, accountId, bytesTotal) {
   const requestedGb = bytesToGb(bytesTotal);
   if (requestedGb <= 0) return null;
 
+  await expireStaleUploadJobs(env, accountId);
   const usage = await accountUsage(env, accountId);
   const reservedGb = await activeUploadReservationGb(env, accountId);
   const availableGb = Math.max(usage.allowanceTotalGb - usage.allowanceUsedGb - reservedGb, 0);
@@ -147,6 +176,11 @@ async function recordUploadUsageEvent(env, { accountId, bytes, galleryId, target
       video_id: targetType === 'video' ? targetId : null,
     }),
   });
+}
+
+function streamStatusErrorIsTerminal(error) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return STREAM_TERMINAL_ERROR_PATTERN.test(message);
 }
 
 async function publishGallery(request, env) {
@@ -338,6 +372,7 @@ async function processReady(request, env) {
   const galleryId = requireString(body, 'galleryId');
   const videoId = String(body.videoId || '').trim();
 
+  const expiredUploadJobs = await expireStaleUploadJobs(env, accountId);
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
   const videoFilter = videoId ? `&id=eq.${encodeURIComponent(videoId)}` : '';
   const processingVideos = await supabaseRest(
@@ -370,6 +405,7 @@ async function processReady(request, env) {
 
   const readyVideos = [];
   const readyReplacementTasks = [];
+  const failedVideoIds = new Set();
   const pendingStreamVideos = [];
   for (const video of processingVideos || []) {
     if (video.stream_uid) {
@@ -377,6 +413,9 @@ async function processReady(request, env) {
       try {
         streamVideo = await getStreamVideo(env, video.stream_uid);
       } catch (error) {
+        if (streamStatusErrorIsTerminal(error)) {
+          failedVideoIds.add(video.id);
+        }
         pendingStreamVideos.push({
           error: error instanceof Error ? error.message : 'Stream status check failed.',
           id: video.id,
@@ -387,6 +426,17 @@ async function processReady(request, env) {
       }
 
       const state = String(streamVideo?.status?.state || '').toLowerCase();
+      if (STREAM_FAILED_STATES.has(state)) {
+        failedVideoIds.add(video.id);
+        pendingStreamVideos.push({
+          error: streamVideo?.status?.errorReason || streamVideo?.status?.error || 'Cloudflare Stream encode failed.',
+          id: video.id,
+          state: state || 'failed',
+          streamUid: video.stream_uid,
+        });
+        continue;
+      }
+
       const ready = streamVideo?.readyToStream === true || state === 'ready';
       if (!ready) {
         pendingStreamVideos.push({
@@ -415,6 +465,9 @@ async function processReady(request, env) {
     try {
       streamVideo = await getStreamVideo(env, streamUid);
     } catch (error) {
+      if (streamStatusErrorIsTerminal(error)) {
+        failedVideoIds.add(task.video_id);
+      }
       pendingStreamVideos.push({
         error: error instanceof Error ? error.message : 'Stream status check failed.',
         id: task.video_id,
@@ -425,6 +478,17 @@ async function processReady(request, env) {
     }
 
     const state = String(streamVideo?.status?.state || '').toLowerCase();
+    if (STREAM_FAILED_STATES.has(state)) {
+      failedVideoIds.add(task.video_id);
+      pendingStreamVideos.push({
+        error: streamVideo?.status?.errorReason || streamVideo?.status?.error || 'Cloudflare Stream encode failed.',
+        id: task.video_id,
+        state: state || 'failed',
+        streamUid,
+      });
+      continue;
+    }
+
     const ready = streamVideo?.readyToStream === true || state === 'ready';
     if (!ready) {
       pendingStreamVideos.push({
@@ -515,9 +579,33 @@ async function processReady(request, env) {
     });
   }
 
+  if (failedVideoIds.size > 0) {
+    const failedIds = [...failedVideoIds].map((id) => encodeURIComponent(id)).join(',');
+    await supabaseRest(env, `videos?gallery_id=eq.${encodeURIComponent(gallery.id)}&id=in.(${failedIds})`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({ processing_status: 'errored', stream_ready: false }),
+    });
+
+    await supabaseRest(env, `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_type=eq.video&target_id=in.(${failedIds})`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'errored' }),
+    });
+
+    await supabaseRest(env, `media_tasks?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&video_id=in.(${failedIds})&status=eq.pending`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'failed', last_error: 'Cloudflare Stream encode failed.' }),
+    });
+  }
+
   return json({
     cleanedTasks: readyExistingTaskVideoIds.size,
-    pending: pendingStreamVideos.length,
+    errored: failedVideoIds.size,
+    erroredVideoIds: [...failedVideoIds],
+    expiredUploadJobs,
+    pending: pendingStreamVideos.filter((video) => !failedVideoIds.has(video.id)).length,
     pendingStreamVideos,
     processed: readyVideos.length + readyReplacementTasks.length,
     processedVideoIds: [...readyVideos.map((video) => video.id), ...readyReplacementTasks.map((task) => task.video_id)],
