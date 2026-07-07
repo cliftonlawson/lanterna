@@ -35,6 +35,7 @@ Done when: one real email delivered, one recipient row with status, one event lo
 
 ### 5. Delivered status transition
 First successful send advances gallery `status` to `delivered` and stamps `delivered_at` (which starts both retention clocks per the spec, even if the retention jobs themselves are deferred). Verify the state-machine trigger migration actually fires on a real send, not just in theory.
+Verified live 2026-07-07: resend writes a new delivery row and `sent` event but does not restamp `delivered_at` or the retention clocks; no code change needed.
 Done when: sending a published gallery flips it to delivered with a timestamp, and resend doesn't regress it.
 
 ### 6. reconcile_usage: build the small worker or cut it explicitly
