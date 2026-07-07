@@ -1,13 +1,5 @@
 import { supabase } from '../../lib/supabase';
-import type { DashboardGallery, WorkspaceAccount } from './model';
 import { photoDatabaseId, videoDatabaseId } from './schemaMapper';
-
-type NotifyDeliveryInput = {
-  deliveryLink: string;
-  gallery: DashboardGallery;
-  recipients: string[];
-  workspace: WorkspaceAccount;
-};
 
 async function sessionToken() {
   const { data } = await supabase.auth.getSession();
@@ -35,40 +27,6 @@ async function postApi<T>(path: string, body: unknown) {
   return await response.json() as T;
 }
 
-async function postOptionalApi(path: string, body: unknown) {
-  const token = await sessionToken();
-  if (!token) return null;
-
-  try {
-    const response = await fetch(path, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) return null;
-    return await response.json().catch(() => null);
-  } catch {
-    return null;
-  }
-}
-
-export async function notifyDeliveryRecipients({ deliveryLink, gallery, recipients, workspace }: NotifyDeliveryInput) {
-  if (!recipients.length) return null;
-
-  return postOptionalApi('/api/delivery/notify', {
-    deliveryLink,
-    galleryId: gallery.id,
-    message: gallery.deliveryDraft.message,
-    recipients,
-    subject: `${gallery.name} is ready`,
-    workspaceName: workspace.studioName,
-  });
-}
-
 export async function publishGallery(galleryId: string) {
   return postApi<{ gallery: { id: string; status: 'published' | 'delivered' }; ok: boolean }>('/api/gallery/publish', {
     galleryId,
@@ -80,7 +38,7 @@ export async function recordGalleryDelivery(input: {
   message: string;
   recipients: string[];
 }) {
-  return postApi<{ deliveryId: string; gallery: { id: string; status: 'delivered' }; ok: boolean }>('/api/delivery/record', input);
+  return postApi<{ deliveryId: string; emails: Array<{ id: string; provider: string; status: string; to: string }>; gallery: { id: string; status: 'delivered' }; ok: boolean }>('/api/delivery/record', input);
 }
 
 type UploadTargetType = 'video' | 'photo';

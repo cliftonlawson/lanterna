@@ -2,7 +2,7 @@ import { createR2PresignedGetUrl, createR2PresignedPutUrl, mediaObjectKey } from
 import { createStreamDirectUpload, createStreamPlayback, createStreamTusUpload, getStreamVideo } from './cloudflareStream.js';
 import { publicGalleryAccessError } from './galleryAccess.js';
 import { accountForUser, assertGalleryMembership, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
-import { empty, errorJson, json, readJson, routePath, safeSlug } from './http.js';
+import { empty, errorJson, json, readJson, routePath } from './http.js';
 import { sendTransactionalEmail } from './transactionalEmail.js';
 import { createPaidUnlockCheckout, paidUnlockSession, stripeWebhook } from './stripeCheckout.js';
 
@@ -12,6 +12,29 @@ const STREAM_BASIC_POST_MAX_BYTES = 200 * 1024 * 1024;
 
 function publicBaseUrl(env) {
   return String(env.PUBLIC_DELIVERY_BASE_URL || env.APP_URL || 'http://127.0.0.1:5173').replace(/\/+$/, '');
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function textToHtml(text = '') {
+  return escapeHtml(text)
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${paragraph.replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
+
+function deliveryLinkForGallery(env, gallery) {
+  return `${publicBaseUrl(env)}/g/${encodeURIComponent(gallery.slug)}`;
+}
+
+function deliveryEmailHtml(message, deliveryLink) {
+  return `${textToHtml(message)}<p><a href="${escapeHtml(deliveryLink)}">Open your gallery</a></p>`;
 }
 
 function streamDirectUploadsEnabled(env) {
@@ -712,31 +735,6 @@ async function publicGalleryPayload(env, gallery) {
   };
 }
 
-async function deliveryNotify(request, env) {
-  const body = await readJson(request);
-  const { accountId } = await requireAccountContext(request, env);
-  const galleryId = requireString(body, 'galleryId');
-  const gallery = await assertGalleryMembership(env, accountId, galleryId);
-  const recipients = Array.isArray(body.recipients) ? body.recipients : [];
-  const deliveryLink = String(body.deliveryLink || `${publicBaseUrl(env)}/g/${encodeURIComponent(safeSlug(gallery.slug || gallery.name))}`);
-  const message = String(body.message || 'Your gallery is ready.');
-  const subject = String(body.subject || `${gallery.name} is ready`);
-
-  const emails = [];
-  for (const recipient of recipients) {
-    const email = String(recipient || '').trim();
-    if (!email) continue;
-    emails.push(await sendTransactionalEmail(env, {
-      html: `<p>${message}</p><p><a href="${deliveryLink}">Open your gallery</a></p>`,
-      subject,
-      text: `${message}\n\nOpen your gallery: ${deliveryLink}`,
-      to: email,
-    }));
-  }
-
-  return json({ emails, ok: true });
-}
-
 async function deliveryRecord(request, env) {
   const body = await readJson(request);
   const { accountId, user } = await requireAccountContext(request, env);
@@ -748,7 +746,13 @@ async function deliveryRecord(request, env) {
   const recipients = Array.isArray(body.recipients)
     ? body.recipients.map((recipient) => String(recipient || '').trim()).filter(Boolean)
     : [];
+  if (!recipients.length) return errorJson('Add at least one recipient before delivery.', 422, { code: 'recipient_required' });
+
   const deliveryId = crypto.randomUUID();
+  const attemptedAt = new Date().toISOString();
+  const deliveryLink = deliveryLinkForGallery(env, gallery);
+  const message = String(body.message || '').trim() || 'Your gallery is ready.';
+  const subject = String(body.subject || `${gallery.name} is ready`);
 
   await supabaseRest(env, 'deliveries', {
     method: 'POST',
@@ -756,7 +760,7 @@ async function deliveryRecord(request, env) {
     body: JSON.stringify({
       gallery_id: gallery.id,
       id: deliveryId,
-      message: String(body.message || '').trim() || null,
+      message,
       sent_by: user.id,
     }),
   });
@@ -767,32 +771,68 @@ async function deliveryRecord(request, env) {
     gallery_id: gallery.id,
     id: crypto.randomUUID(),
     name: null,
-    status: 'sent',
-    last_sent_at: new Date().toISOString(),
+    status: 'failed',
+    last_sent_at: attemptedAt,
   }));
 
-  if (recipientRows.length) {
-    await supabaseRest(env, 'delivery_recipients', {
-      method: 'POST',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify(recipientRows),
-    });
+  await supabaseRest(env, 'delivery_recipients', {
+    method: 'POST',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify(recipientRows),
+  });
 
-    await supabaseRest(env, 'delivery_events', {
-      method: 'POST',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify(recipientRows.map((recipient) => ({
-        event_type: 'sent',
-        gallery_id: gallery.id,
-        id: crypto.randomUUID(),
-        metadata: { delivery_id: deliveryId },
-        recipient_id: recipient.id,
-        video_id: null,
-      }))),
+  const emails = [];
+  const failures = [];
+  for (const recipient of recipientRows) {
+    try {
+      const email = await sendTransactionalEmail(env, {
+        html: deliveryEmailHtml(message, deliveryLink),
+        subject,
+        text: `${message}\n\nOpen your gallery: ${deliveryLink}`,
+        to: recipient.email,
+      });
+      emails.push(email);
+
+      await supabaseRest(env, 'delivery_events', {
+        method: 'POST',
+        headers: { prefer: 'return=minimal' },
+        body: JSON.stringify({
+          event_type: 'sent',
+          gallery_id: gallery.id,
+          id: crypto.randomUUID(),
+          metadata: { delivery_id: deliveryId, provider: email.provider, provider_id: email.id },
+          recipient_id: recipient.id,
+          video_id: null,
+        }),
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Email provider request failed.';
+      failures.push({ email: recipient.email, message: errorMessage });
+      await supabaseRest(env, 'delivery_events', {
+        method: 'POST',
+        headers: { prefer: 'return=minimal' },
+        body: JSON.stringify({
+          event_type: 'failed',
+          gallery_id: gallery.id,
+          id: crypto.randomUUID(),
+          metadata: { delivery_id: deliveryId, error: errorMessage, provider: 'resend' },
+          recipient_id: recipient.id,
+          video_id: null,
+        }),
+      });
+    }
+  }
+
+  if (failures.length) {
+    return errorJson('Delivery email failed. The failed send was recorded.', 502, {
+      code: 'email_failed',
+      deliveryId,
+      failedCount: failures.length,
+      sentCount: emails.length,
     });
   }
 
-  return json({ deliveryId, gallery: { id: gallery.id, status: 'delivered' }, ok: true });
+  return json({ deliveryId, emails, gallery: { id: gallery.id, status: 'delivered' }, ok: true });
 }
 
 async function publicGallery(request, env, slug) {
@@ -839,7 +879,6 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'stream/playback') return await streamPlayback(request, env);
     if (request.method === 'POST' && path === 'gallery/publish') return await publishGallery(request, env);
     if (request.method === 'POST' && path === 'delivery/record') return await deliveryRecord(request, env);
-    if (request.method === 'POST' && path === 'delivery/notify') return await deliveryNotify(request, env);
     if (request.method === 'POST' && path === 'stripe/webhook') return await stripeWebhook(request, env);
     if (request.method === 'GET' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/session')) return await paidUnlockSession(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/session$/, ''));
     if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/checkout')) return await createPaidUnlockCheckout(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/checkout$/, ''));

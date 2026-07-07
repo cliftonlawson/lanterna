@@ -49,8 +49,8 @@ export type AccessType = 'public' | 'password' | 'private';
 export type GalleryStatus = 'draft' | 'published' | 'delivered';
 export type StorageTier = 'hot' | 'web' | 'cold' | 'archived' | 'purged';
 export type ProcessingStatus = 'uploading' | 'processing' | 'ready' | 'errored';
-export type RecipientStatus = 'sent' | 'opened';
-export type DeliveryEventType = 'sent' | 'opened' | 'video_viewed' | 'downloaded';
+export type RecipientStatus = 'sent' | 'opened' | 'failed';
+export type DeliveryEventType = 'sent' | 'opened' | 'video_viewed' | 'downloaded' | 'failed';
 
 // UI grouping alias. The real schema stores this as galleries.project_type.
 export type Project = {

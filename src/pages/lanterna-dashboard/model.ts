@@ -37,7 +37,7 @@ export type UploadJob = {
 
 export type DeliveryRecipient = {
   email: string;
-  status: 'sent' | 'opened';
+  status: 'sent' | 'opened' | 'failed';
   at: string;
 };
 

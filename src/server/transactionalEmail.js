@@ -18,7 +18,11 @@ function textToHtml(text = '') {
 }
 
 function localEmailMode(env = {}) {
-  return !env.EMAIL_PROVIDER_API_KEY || emailProvider(env) === 'mock' || emailProvider(env) === 'local';
+  return emailProvider(env) === 'mock' || emailProvider(env) === 'local';
+}
+
+function emailProviderApiKey(env = {}) {
+  return env.EMAIL_PROVIDER_API_KEY || env.RESEND_API_KEY;
 }
 
 export function createDeliveryEmailPayload(env, { to, subject, text, html, replyTo }) {
@@ -32,7 +36,7 @@ export function createDeliveryEmailPayload(env, { to, subject, text, html, reply
   if (!cleanHtml && !cleanText) throw new Error('An email body is required.');
 
   return {
-    from: env.EMAIL_FROM || 'Lanterna <deliver@lanterna.film>',
+    from: env.EMAIL_FROM || env.RESEND_FROM_EMAIL || 'Lanterna <onboarding@resend.dev>',
     html: cleanHtml,
     reply_to: replyTo || env.EMAIL_REPLY_TO || undefined,
     subject: cleanSubject,
@@ -57,11 +61,13 @@ export async function sendTransactionalEmail(env, input, fetchImpl = fetch) {
 
   const provider = emailProvider(env);
   if (provider !== 'resend') throw new Error(`Unsupported email provider: ${provider}`);
+  const apiKey = emailProviderApiKey(env);
+  if (!apiKey) throw new Error('Resend API key is not configured.');
 
   const response = await fetchImpl('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${env.EMAIL_PROVIDER_API_KEY}`,
+      authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
     body: JSON.stringify(payload),
