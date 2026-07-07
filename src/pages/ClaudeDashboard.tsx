@@ -20,6 +20,7 @@ import {
   saveDashboardGalleries,
   saveUploadJobs,
   saveWorkspaceAccount,
+  softDeleteGalleryMedia,
 } from './lanterna-dashboard/dashboardRepository';
 import { invalidRecipientEmails, parseRecipientEmails } from './lanterna-dashboard/delivery';
 import { GalleryStudioScreen } from './lanterna-dashboard/GalleryStudioScreen';
@@ -217,6 +218,27 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
   const updateActiveGallery = (patch: Partial<DashboardGallery>) => {
     commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? { ...gallery, ...patch } : gallery), 'autosave');
+  };
+
+  const deleteActiveVideo = async (videoId: string) => {
+    const video = activeGallery.videoItems.find((item) => item.id === videoId);
+    if (!video) return;
+
+    const nextVideos = activeGallery.videoItems.filter((item) => item.id !== videoId);
+    const nextFeaturedFilm = activeGallery.design.featuredFilm === video.title
+      ? nextVideos[0]?.title ?? ''
+      : activeGallery.design.featuredFilm;
+
+    const result = await softDeleteGalleryMedia(activeGallery.id, videoId, 'video');
+    commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? {
+      ...gallery,
+      coverChosen: nextVideos.length > 0 ? gallery.coverChosen : false,
+      design: { ...gallery.design, featuredFilm: nextFeaturedFilm },
+      videoItems: nextVideos,
+      videos: nextVideos.length,
+    } : gallery), 'video');
+
+    if (result.mode === 'local') showToast(result.reason ?? 'Film removed locally; database delete did not complete');
   };
 
   const createGallery = (event: React.FormEvent<HTMLFormElement>) => {
@@ -673,6 +695,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           gallery={activeGallery}
           publicGalleryBase={workspace.customDomain ?? 'deliver.lanterna.studio'}
           videoId={detailVideoId}
+          onDeleteVideo={deleteActiveVideo}
           onGalleryChange={updateActiveGallery}
           onClose={() => setDetailOpen(false)}
           onShowToast={showToast}
@@ -699,7 +722,7 @@ function videoNeedsProcessingRefresh(video: MediaVideo) {
 function galleryVideoJobNeedsProcessing(job: UploadJob, galleryId: string) {
   return job.galleryId === galleryId
     && job.targetType === 'video'
-    && (job.status === 'processing' || job.status === 'uploading');
+    && job.status === 'processing';
 }
 
 function removePendingMediaFromGallery(gallery: DashboardGallery, targetId: string | null, targetType: 'video' | 'photo') {

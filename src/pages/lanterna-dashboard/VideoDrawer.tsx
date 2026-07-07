@@ -24,12 +24,13 @@ type Props = {
   gallery: DashboardGallery;
   publicGalleryBase: string;
   videoId: string | null;
+  onDeleteVideo: (videoId: string) => Promise<void>;
   onGalleryChange: (patch: Partial<DashboardGallery>) => void;
   onClose: () => void;
   onShowToast: (message: string) => void;
 };
 
-export function VideoDrawer({ gallery, publicGalleryBase, videoId, onGalleryChange, onClose, onShowToast }: Props) {
+export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo, onGalleryChange, onClose, onShowToast }: Props) {
   const video = gallery.videoItems.find((item) => item.id === videoId) ?? gallery.videoItems[0];
   const videoIndex = Math.max(0, gallery.videoItems.findIndex((item) => item.id === video?.id));
   const paidEnabled = Boolean(video?.paidUnlockEnabled);
@@ -121,19 +122,9 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onGalleryChan
     });
   };
 
-  const deleteVideo = () => {
+  const deleteVideo = async () => {
     if (!video) return;
-    const nextVideos = gallery.videoItems.filter((item) => item.id !== video.id);
-    const nextFeaturedFilm = gallery.design.featuredFilm === video.title
-      ? nextVideos[0]?.title ?? ''
-      : gallery.design.featuredFilm;
-
-    onGalleryChange({
-      videos: nextVideos.length,
-      videoItems: nextVideos,
-      coverChosen: nextVideos.length > 0 ? gallery.coverChosen : false,
-      design: { ...gallery.design, featuredFilm: nextFeaturedFilm },
-    });
+    await onDeleteVideo(video.id);
     onShowToast('Film deleted');
     onClose();
   };
@@ -376,7 +367,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onGalleryChan
             <Toggle title="Public in gallery" checked={video?.visibleInGallery ?? true} onChange={(visibleInGallery) => updateVideo({ visibleInGallery })} />
             <Toggle title="Allow download" checked={video?.downloadEnabled ?? gallery.allowDownloads} onChange={(downloadEnabled) => updateVideo({ downloadEnabled })} />
             <label>Tags<input value={video?.tags.join(', ') ?? ''} onChange={(event) => updateVideo({ tags: event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean) })} /></label>
-            <button className="danger" onClick={deleteVideo}><Trash2 size={15} /> Delete film</button>
+            <button className="danger" onClick={() => void deleteVideo()}><Trash2 size={15} /> Delete film</button>
           </Panel>
         </div>
         <section className="paid-unlock-panel">

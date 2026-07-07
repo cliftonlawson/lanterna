@@ -149,21 +149,6 @@ function isMissingPaidUnlockColumn(error: unknown) {
   return message.includes('paid_unlock_') || message.includes('paidUnlock');
 }
 
-async function deleteMissingRows(table: 'albums' | 'photos' | 'videos', galleryId: string, ids: string[]) {
-  if (!ids.length) {
-    const { error } = await supabase.from(table).delete().eq('gallery_id', galleryId);
-    if (error) throw error;
-    return;
-  }
-
-  const { error } = await supabase
-    .from(table)
-    .delete()
-    .eq('gallery_id', galleryId)
-    .not('id', 'in', `(${ids.join(',')})`);
-  if (error) throw error;
-}
-
 async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: string) {
   if (!canPersistGalleryToSchema(gallery)) {
     throw new Error(`${gallery.name} needs a password before it can be saved to Supabase.`);
@@ -205,10 +190,6 @@ async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: strin
     const { error } = await supabase.from('photos').upsert(bundle.photos);
     if (error) throw error;
   }
-
-  await deleteMissingRows('videos', bundle.gallery.id, bundle.videos.map((video) => video.id));
-  await deleteMissingRows('photos', bundle.gallery.id, bundle.photos.map((photo) => photo.id));
-  await deleteMissingRows('albums', bundle.gallery.id, bundle.albums.map((album) => album.id));
 
   const { error: designError } = await supabase.from('gallery_design').upsert(designWithoutDeferredMediaRefs);
   if (designError) throw designError;
@@ -454,7 +435,7 @@ export async function loadUploadJobs() {
       const targetExists = job.target_type === 'video'
         ? validVideoIds.has(job.target_id)
         : validPhotoIds.has(job.target_id);
-      if (activeStatuses.has(job.status)) return targetExists;
+      if (activeStatuses.has(job.status)) return true;
       if (!targetExists || terminalTargets.has(targetKey)) return false;
       terminalTargets.add(targetKey);
       return true;
@@ -466,10 +447,19 @@ export async function loadUploadJobs() {
       fileName: job.target_type === 'video' && job.target_id
         ? videoTitleById.get(job.target_id) ?? 'Video upload'
         : 'Photo upload',
-      status: job.status,
+      status: activeStatuses.has(job.status) && !(
+        job.target_type === 'video'
+          ? validVideoIds.has(job.target_id)
+          : validPhotoIds.has(job.target_id)
+      ) ? 'errored' : job.status,
       bytesTotal: Number(job.bytes_total),
       bytesUploaded: Number(job.bytes_uploaded),
       createdAt: job.created_at,
+      errorMessage: activeStatuses.has(job.status) && !(
+        job.target_type === 'video'
+          ? validVideoIds.has(job.target_id)
+          : validPhotoIds.has(job.target_id)
+      ) ? 'Upload target is missing. Retry this upload.' : undefined,
     }));
 
     saveStoredUploadJobs(jobs);
@@ -537,6 +527,35 @@ export async function clearUploadJob(job: UploadJob): Promise<SaveResult> {
   } catch (error) {
     console.warn('Lanterna upload job clear stayed local because Supabase delete failed', error);
     return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase upload job delete failed' };
+  }
+}
+
+export async function softDeleteGalleryMedia(
+  galleryId: string,
+  targetId: string,
+  targetType: 'video' | 'photo',
+): Promise<SaveResult> {
+  if (!isSupabaseConfigured) return { mode: 'local', ok: true };
+
+  try {
+    const accountId = await currentAccountId();
+    if (!accountId) throw new Error('Supabase account membership is missing.');
+
+    const table = targetType === 'video' ? 'videos' : 'photos';
+    const databaseId = targetType === 'video' ? videoDatabaseId(targetId) : photoDatabaseId(targetId);
+    const { error } = await supabase
+      .from(table)
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('gallery_id', galleryId)
+      .eq('id', databaseId)
+      .is('deleted_at', null);
+
+    if (error) throw error;
+
+    return { mode: 'supabase', ok: true };
+  } catch (error) {
+    console.warn('Lanterna media delete stayed local because Supabase soft-delete failed', error);
+    return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase media delete failed' };
   }
 }
 

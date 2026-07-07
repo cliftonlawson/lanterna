@@ -178,6 +178,27 @@ async function recordUploadUsageEvent(env, { accountId, bytes, galleryId, target
   });
 }
 
+async function markUploadJobErrored(env, accountId, uploadJobId) {
+  if (!uploadJobId) return;
+
+  await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(uploadJobId)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+    method: 'PATCH',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({ status: 'errored' }),
+  });
+}
+
+async function uploadTargetExists(env, galleryId, targetId, targetType) {
+  const table = targetType === 'photo' ? 'photos' : 'videos';
+  const rows = await supabaseRest(
+    env,
+    `${table}?select=id&gallery_id=eq.${encodeURIComponent(galleryId)}&id=eq.${encodeURIComponent(targetId)}&deleted_at=is.null&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+
+  return rows?.length > 0;
+}
+
 function streamStatusErrorIsTerminal(error) {
   const message = error instanceof Error ? error.message : String(error || '');
   return STREAM_TERMINAL_ERROR_PATTERN.test(message);
@@ -272,6 +293,11 @@ async function uploadComplete(request, env) {
   const bytes = Number(body.bytes || 0);
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  if (!await uploadTargetExists(env, gallery.id, targetId, targetType)) {
+    await markUploadJobErrored(env, accountId, body.uploadJobId);
+    return errorJson('Upload target no longer exists. Reload and retry the upload.', 409);
+  }
+
   if (targetType === 'video' && body.stageReplacement === true && streamUid) {
     if (body.uploadJobId) {
       await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(body.uploadJobId)}&account_id=eq.${encodeURIComponent(accountId)}`, {
