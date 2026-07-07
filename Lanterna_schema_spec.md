@@ -308,6 +308,7 @@ The two meters, made explicit:
 
 - **Flow meter** (`allowance_used_gb` vs `allowance_total_gb`): increments on every successful upload via a `usage_events` row, resets/recomputes per entitlement period, and **does not decrease when a gallery is deleted**. This is what the upload-slot Worker checks and what gates new uploads. This is what the customer is buying.
 - **Stock meter** (`hot_bytes_stored`, `cold_bytes_stored`, `stream_minutes_stored`): the real bytes and minutes, reconciled from Cloudflare on a schedule. This drives *your* cost and your cold-tiering decisions, not the customer's allowance.
+- **Launch deferral**: stock-meter reconciliation is post-launch. Do not enqueue `reconcile_usage` tasks until the Cloudflare reconciliation worker/admin command exists; the upload allowance gate uses the flow meter, not stock-meter reconciliation.
 
 UI consequence (carry back to design): the dashboard label must read as **"upload allowance used this period,"** not "storage used." With a flow meter, a deleted gallery does not free allowance, and "storage used" wording would generate support tickets. The over-cap block message becomes "you've used your annual upload room," with the upgrade/buy-a-block path.
 
