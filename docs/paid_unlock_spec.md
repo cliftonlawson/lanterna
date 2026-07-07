@@ -15,15 +15,17 @@ The studio enables paid unlocks per video in the video drawer. A paid video keep
 
 The studio payout model in code is 90% studio payout and 10% Lanterna platform fee. Those values are calculated server-side from `amount_total`.
 
+Product decision: a paid unlock grants viewing. Download continues to follow the gallery-level and video-level download flags, so the studio decides whether a buyer can download.
+
 ## Public Purchase Flow
 
 When a viewer clicks a locked film, the public gallery opens a paid unlock modal. The modal calls:
 
 `POST /api/public/gallery/:slug/paid-unlock/checkout`
 
-The server validates that the gallery is publicly accessible, the video belongs to that gallery, the video is visible, and `paid_unlock_enabled` is true. It then creates a Stripe Checkout Session with metadata for `account_id`, `gallery_id`, `gallery_slug`, `video_id`, and `kind=video_unlock`.
+The server validates that the gallery is publicly accessible, the video belongs to that gallery, the video is visible, and `paid_unlock_enabled` is true. It then creates a Stripe Checkout Session with metadata for `account_id`, `gallery_id`, `gallery_slug`, `video_id`, `purchase_id`, and `kind=video_unlock`. The same metadata is also attached to the Stripe PaymentIntent so payment-failure webhooks can resolve the pending purchase.
 
-Current behavior: checkout creation does not write a `video_unlock_purchases` row. The first database write happens only after Stripe reports a paid session through webhook or return-URL verification. That means abandoned checkout sessions are currently visible only in Stripe, not in Lanterna tables.
+Before the checkout URL is returned to the browser, Lanterna writes a `video_unlock_purchases` row with `status='pending'`, the Stripe Checkout Session id, amount, currency, fee split, gallery id, video id, and account id. Buyer email is unknown until Stripe collects it, so pending rows may have `buyer_email=null`.
 
 Stripe success returns to:
 
@@ -33,7 +35,7 @@ Stripe cancel returns to:
 
 `/g/:slug?unlock_cancelled=true`
 
-The current public UI does not display a special cancelled-checkout message.
+The current public UI does not display a special cancelled-checkout message. The pending row remains pending until a Stripe webhook completes or fails it.
 
 ## Verification And Unlock
 
@@ -41,9 +43,9 @@ The public page detects `unlock_session` in the URL and calls:
 
 `GET /api/public/gallery/:slug/paid-unlock/session?session_id=:sessionId`
 
-The server fetches the Checkout Session from Stripe, requires `payment_status=paid`, verifies the Stripe metadata matches the current gallery, upserts a completed `video_unlock_purchases` row, then returns unlocked media for that video.
+The server fetches the Checkout Session from Stripe, requires `payment_status=paid`, verifies the Stripe metadata matches the current gallery, then looks for a completed `video_unlock_purchases` row. Return-URL verification does not grant the unlock by itself; it is a fast convenience path that polls briefly and returns media after the Stripe webhook has completed the purchase.
 
-The Stripe webhook route also handles `checkout.session.completed`, verifies the webhook signature, and upserts the same completed purchase row. Return-URL verification and webhook delivery are intentionally idempotent through the unique `stripe_checkout_session_id` index.
+The Stripe webhook route handles `checkout.session.completed`, verifies the webhook signature, and upserts the completed purchase row. This is the authoritative path that grants unlock access, including when a buyer pays and closes the tab before returning to Lanterna. Webhook delivery is idempotent through the unique `stripe_checkout_session_id` index. Duplicate completed webhooks keep the original `unlocked_at` timestamp.
 
 ## Purchase States
 
@@ -51,15 +53,15 @@ The Stripe webhook route also handles `checkout.session.completed`, verifies the
 
 Implemented today:
 
-- `complete`: written by webhook or return-URL verification when Stripe payment status is paid.
+- `pending`: written immediately after Stripe Checkout Session creation, before redirecting the viewer to Stripe.
+- `complete`: written by the Stripe webhook when payment status is paid.
+- `failed`: written by webhook for expired or async-failed Checkout Sessions, and for `payment_intent.payment_failed` when a card is declined.
 
 Allowed but not currently written by application code:
 
-- `pending`: no row is created when checkout starts.
-- `failed`: no failed-payment or expired-session handler writes this.
 - `refunded`: no refund webhook handler writes this.
 
-For v1, Lanterna treats Stripe as the source of truth for non-complete payment attempts. Item 9 should decide whether abandoned/failed sessions need Lanterna rows.
+For v1, Lanterna treats Stripe as the source of truth for refunds. Abandoned checkout remains pending until Stripe sends an expiration/failure event.
 
 ## Unlocked Access
 
@@ -73,7 +75,7 @@ After unlock, the session verification response returns:
 
 Unlocked playback behaves like normal public playback. Stream is preferred when available, with R2 fallback. Download appears only if the gallery allows downloads and the video has not disabled downloads.
 
-Unlock state is held in the viewer's current browser session. The app does not currently create a durable viewer account or email-based re-unlock flow.
+Unlock state is a server-side purchase fact. The buyer can restore an unlock from another browser or device by entering the email address Stripe collected at checkout. No viewer account is created.
 
 ## Refunds
 
@@ -84,5 +86,4 @@ If refunds become a product surface, add a Stripe refund webhook handler and dec
 ## Known Gaps
 
 - `paid_unlock_trailer` is stored and the studio UI promises a locked preview trailer, but public locked videos do not currently receive teaser playback URLs. The locked tile is visible; the film itself is not playable until purchase.
-- Abandoned checkout is not written to Lanterna. Stripe has the session; Supabase does not.
-- Completed unlock access is session-local in the browser after return verification. There is no resend/recover-unlock flow by buyer email.
+- Abandoned checkout remains `pending` unless Stripe sends an expiration/failure webhook.

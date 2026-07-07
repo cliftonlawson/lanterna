@@ -67,6 +67,10 @@ function payoutFor(amountCents) {
   };
 }
 
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 async function paidVideoForGallery(env, gallery, videoId) {
   const rows = await supabaseRest(
     env,
@@ -92,6 +96,30 @@ function checkoutReturnUrl(request, gallery, status) {
   return `${base}/g/${encodeURIComponent(gallery.slug)}${query}`;
 }
 
+async function createPendingPurchase(env, { amountCents, gallery, purchaseId, session, video }) {
+  const { platformFeeCents, studioPayoutCents } = payoutFor(amountCents);
+
+  await supabaseRest(env, 'video_unlock_purchases?on_conflict=stripe_checkout_session_id', {
+    body: JSON.stringify({
+      account_id: gallery.account_id,
+      amount_cents: amountCents,
+      buyer_email: null,
+      currency: video.paid_unlock_currency || 'usd',
+      gallery_id: gallery.id,
+      id: purchaseId,
+      platform_fee_cents: platformFeeCents,
+      status: 'pending',
+      stripe_checkout_session_id: session.id,
+      stripe_payment_intent_id: session.payment_intent || null,
+      studio_payout_cents: studioPayoutCents,
+      unlocked_at: null,
+      video_id: video.id,
+    }),
+    headers: { prefer: 'resolution=merge-duplicates,return=minimal' },
+    method: 'POST',
+  });
+}
+
 export async function createPaidUnlockCheckout(request, env, slug) {
   const gallery = await publicGalleryBySlug(env, slug);
   if (!gallery) return errorJson('Gallery not found.', 404);
@@ -104,6 +132,7 @@ export async function createPaidUnlockCheckout(request, env, slug) {
   if (amountCents < 50) throw new Error('Paid unlock price must be at least $0.50.');
 
   const label = String(video.paid_unlock_label || video.title || 'Bonus film');
+  const purchaseId = crypto.randomUUID();
   const session = await stripeRequest(env, '/checkout/sessions', {
     mode: 'payment',
     success_url: checkoutReturnUrl(request, gallery, 'success'),
@@ -116,9 +145,18 @@ export async function createPaidUnlockCheckout(request, env, slug) {
     'metadata[account_id]': gallery.account_id,
     'metadata[gallery_id]': gallery.id,
     'metadata[gallery_slug]': gallery.slug,
+    'metadata[purchase_id]': purchaseId,
     'metadata[video_id]': video.id,
     'metadata[kind]': 'video_unlock',
+    'payment_intent_data[metadata][account_id]': gallery.account_id,
+    'payment_intent_data[metadata][gallery_id]': gallery.id,
+    'payment_intent_data[metadata][gallery_slug]': gallery.slug,
+    'payment_intent_data[metadata][purchase_id]': purchaseId,
+    'payment_intent_data[metadata][video_id]': video.id,
+    'payment_intent_data[metadata][kind]': 'video_unlock',
   });
+
+  await createPendingPurchase(env, { amountCents, gallery, purchaseId, session, video });
 
   return json({ checkoutUrl: session.url, sessionId: session.id });
 }
@@ -171,6 +209,15 @@ async function verifyStripeWebhook(request, env) {
   return JSON.parse(rawBody);
 }
 
+async function purchaseForSession(env, sessionId) {
+  const rows = await supabaseRest(
+    env,
+    `video_unlock_purchases?select=*&stripe_checkout_session_id=eq.${encodeURIComponent(sessionId)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  return rows?.[0] ?? null;
+}
+
 async function upsertCompletedPurchase(env, session) {
   if (session?.metadata?.kind !== 'video_unlock') return;
   if (session.payment_status !== 'paid') return;
@@ -178,11 +225,12 @@ async function upsertCompletedPurchase(env, session) {
   const accountId = session.metadata.account_id;
   const galleryId = session.metadata.gallery_id;
   const videoId = session.metadata.video_id;
-  const buyerEmail = session.customer_details?.email || session.customer_email;
+  const buyerEmail = normalizeEmail(session.customer_details?.email || session.customer_email);
   if (!accountId || !galleryId || !videoId || !buyerEmail) throw new Error('Stripe session is missing unlock metadata.');
 
   const amountCents = cents(session.amount_total);
   const { platformFeeCents, studioPayoutCents } = payoutFor(amountCents);
+  const existing = await purchaseForSession(env, session.id);
 
   await supabaseRest(env, 'video_unlock_purchases?on_conflict=stripe_checkout_session_id', {
     body: JSON.stringify({
@@ -191,17 +239,50 @@ async function upsertCompletedPurchase(env, session) {
       buyer_email: buyerEmail,
       currency: session.currency || 'usd',
       gallery_id: galleryId,
+      ...(session.metadata.purchase_id ? { id: session.metadata.purchase_id } : {}),
       platform_fee_cents: platformFeeCents,
       status: 'complete',
       stripe_checkout_session_id: session.id,
       stripe_payment_intent_id: session.payment_intent || null,
       studio_payout_cents: studioPayoutCents,
-      unlocked_at: new Date().toISOString(),
+      unlocked_at: existing?.unlocked_at || new Date().toISOString(),
       video_id: videoId,
     }),
     headers: { prefer: 'resolution=merge-duplicates,return=minimal' },
     method: 'POST',
   });
+}
+
+async function markPurchaseFailed(env, session) {
+  if (session?.metadata?.kind !== 'video_unlock' || !session.id) return;
+  await supabaseRest(
+    env,
+    `video_unlock_purchases?stripe_checkout_session_id=eq.${encodeURIComponent(session.id)}&status=neq.complete`,
+    {
+      body: JSON.stringify({
+        status: 'failed',
+        stripe_payment_intent_id: session.payment_intent || null,
+      }),
+      headers: { prefer: 'return=minimal' },
+      method: 'PATCH',
+    },
+  );
+}
+
+async function markPurchaseFailedFromPaymentIntent(env, paymentIntent) {
+  if (paymentIntent?.metadata?.kind !== 'video_unlock' || !paymentIntent.metadata.purchase_id) return;
+  await supabaseRest(
+    env,
+    `video_unlock_purchases?id=eq.${encodeURIComponent(paymentIntent.metadata.purchase_id)}&status=neq.complete`,
+    {
+      body: JSON.stringify({
+        status: 'failed',
+        stripe_payment_intent_id: paymentIntent.id || null,
+      }),
+      headers: { prefer: 'return=minimal' },
+      method: 'PATCH',
+    },
+  );
 }
 
 export async function stripeWebhook(request, env) {
@@ -214,6 +295,10 @@ export async function stripeWebhook(request, env) {
 
   if (event.type === 'checkout.session.completed') {
     await upsertCompletedPurchase(env, event.data?.object);
+  } else if (event.type === 'checkout.session.expired' || event.type === 'checkout.session.async_payment_failed') {
+    await markPurchaseFailed(env, event.data?.object);
+  } else if (event.type === 'payment_intent.payment_failed') {
+    await markPurchaseFailedFromPaymentIntent(env, event.data?.object);
   }
 
   return json({ ok: true });
@@ -221,6 +306,25 @@ export async function stripeWebhook(request, env) {
 
 function sessionUnlockMediaKeys(video) {
   return [video.r2_key, video.web_copy_r2_key, video.poster_r2_key].filter(Boolean);
+}
+
+async function unlockPayloadForPurchase(env, gallery, purchase) {
+  if (!purchase || purchase.status !== 'complete') return null;
+  const video = await paidVideoForGallery(env, gallery, purchase.video_id);
+  const media = {};
+  for (const key of sessionUnlockMediaKeys(video)) {
+    media[key] = await createR2PresignedGetUrl(env, { expiresInSeconds: 900, key });
+  }
+  const stream = video.stream_uid && video.stream_ready !== false && env.CLOUDFLARE_STREAM_SIGNING_KEY_ID && env.CLOUDFLARE_STREAM_SIGNING_JWK
+    ? { [video.stream_uid]: await createStreamPlayback(env, video.stream_uid, { expiresInSeconds: 900 }) }
+    : {};
+
+  return {
+    buyerEmail: purchase.buyer_email || null,
+    media,
+    stream,
+    videoId: video.id,
+  };
 }
 
 export async function paidUnlockSession(request, env, slug) {
@@ -243,20 +347,32 @@ export async function paidUnlockSession(request, env, slug) {
     return errorJson('Unlock session does not match this gallery.', 403);
   }
 
-  await upsertCompletedPurchase(env, session);
-  const video = await paidVideoForGallery(env, gallery, session.metadata.video_id);
-  const media = {};
-  for (const key of sessionUnlockMediaKeys(video)) {
-    media[key] = await createR2PresignedGetUrl(env, { expiresInSeconds: 900, key });
-  }
-  const stream = video.stream_uid && video.stream_ready !== false && env.CLOUDFLARE_STREAM_SIGNING_KEY_ID && env.CLOUDFLARE_STREAM_SIGNING_JWK
-    ? { [video.stream_uid]: await createStreamPlayback(env, video.stream_uid, { expiresInSeconds: 900 }) }
-    : {};
+  const purchase = await purchaseForSession(env, session.id);
+  const unlock = await unlockPayloadForPurchase(env, gallery, purchase);
+  if (!unlock) return errorJson('Payment is confirmed. Waiting for Stripe to finish the unlock.', 409, { code: 'unlock_pending_webhook' });
 
-  return json({
-    buyerEmail: session.customer_details?.email || session.customer_email || null,
-    media,
-    stream,
-    videoId: video.id,
-  });
+  return json(unlock);
+}
+
+export async function recoverPaidUnlock(request, env, slug) {
+  const gallery = await publicGalleryBySlug(env, slug);
+  if (!gallery) return errorJson('Gallery not found.', 404);
+  const accessError = publicGalleryAccessError(gallery);
+  if (accessError) return accessError;
+
+  const body = await request.json().catch(() => ({}));
+  const email = normalizeEmail(body.email);
+  const videoId = String(body.videoId || '').trim();
+  if (!email) return errorJson('Enter the email used at checkout.', 400);
+  if (!videoId) return errorJson('videoId is required.', 400);
+
+  const rows = await supabaseRest(
+    env,
+    `video_unlock_purchases?select=*&gallery_id=eq.${encodeURIComponent(gallery.id)}&video_id=eq.${encodeURIComponent(videoId)}&status=eq.complete&buyer_email=eq.${encodeURIComponent(email)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  const unlock = await unlockPayloadForPurchase(env, gallery, rows?.[0] ?? null);
+  if (!unlock) return errorJson('No completed unlock was found for that email.', 404, { code: 'unlock_not_found' });
+
+  return json(unlock);
 }

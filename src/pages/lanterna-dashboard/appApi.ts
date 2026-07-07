@@ -310,12 +310,38 @@ export async function createPaidUnlockCheckout(slug: string, videoId: string) {
   return payload as { checkoutUrl: string; sessionId: string };
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export async function verifyPaidUnlockSession(slug: string, sessionId: string) {
-  const response = await fetch(`/api/public/gallery/${encodeURIComponent(slug)}/paid-unlock/session?session_id=${encodeURIComponent(sessionId)}`);
+  let payload: { details?: { code?: string }; error?: string; message?: string } | null = null;
+  let response: Response | null = null;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    response = await fetch(`/api/public/gallery/${encodeURIComponent(slug)}/paid-unlock/session?session_id=${encodeURIComponent(sessionId)}`);
+    payload = await response.json().catch(() => null);
+    if (response.ok) return payload as PaidUnlockSessionPayload;
+
+    if (response.status !== 409 || payload?.details?.code !== 'unlock_pending_webhook') break;
+    await wait(1000);
+  }
+
+  const message = payload?.error ?? payload?.message ?? `Unlock verification failed (${response?.status ?? 0})`;
+  throw new Error(message);
+}
+
+
+export async function recoverPaidUnlock(slug: string, videoId: string, email: string) {
+  const response = await fetch(`/api/public/gallery/${encodeURIComponent(slug)}/paid-unlock/recover`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, videoId }),
+  });
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const message = payload?.error ?? payload?.message ?? `Unlock verification failed (${response.status})`;
+    const message = payload?.error ?? payload?.message ?? `Unlock recovery failed (${response.status})`;
     throw new Error(message);
   }
 

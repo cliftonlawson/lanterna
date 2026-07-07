@@ -4,7 +4,7 @@ import { publicGalleryAccessError } from './galleryAccess.js';
 import { accountForUser, assertGalleryMembership, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
 import { empty, errorJson, json, readJson, routePath } from './http.js';
 import { sendTransactionalEmail } from './transactionalEmail.js';
-import { createPaidUnlockCheckout, paidUnlockSession, stripeWebhook } from './stripeCheckout.js';
+import { createPaidUnlockCheckout, paidUnlockSession, recoverPaidUnlock, stripeWebhook } from './stripeCheckout.js';
 
 const uploadTargetTypes = new Set(['video', 'photo']);
 const PUBLIC_STREAM_PLAYBACK_TTL_SECONDS = 21600;
@@ -951,6 +951,7 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'delivery/record') return await deliveryRecord(request, env);
     if (request.method === 'POST' && path === 'stripe/webhook') return await stripeWebhook(request, env);
     if (request.method === 'GET' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/session')) return await paidUnlockSession(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/session$/, ''));
+    if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/recover')) return await recoverPaidUnlock(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/recover$/, ''));
     if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/checkout')) return await createPaidUnlockCheckout(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/checkout$/, ''));
     if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/unlock')) return await publicGalleryUnlock(request, env, path.replace(/^public\/gallery\//, '').replace(/\/unlock$/, ''));
     if (request.method === 'GET' && path.startsWith('public/gallery/')) return await publicGallery(request, env, path.replace(/^public\/gallery\//, ''));

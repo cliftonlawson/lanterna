@@ -1,11 +1,12 @@
 import type { FormEvent } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, Lock, RefreshCw, Share2, X } from 'lucide-react';
 import {
   createPaidUnlockCheckout,
   getPublicGallery,
   type PaidUnlockSessionPayload,
   type PublicGalleryPayload,
+  recoverPaidUnlock,
   unlockPublicGallery,
   verifyPaidUnlockSession,
 } from './lanterna-dashboard/appApi';
@@ -171,6 +172,12 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
     ...Object.assign({}, ...Object.values(verifiedUnlocks).map((unlock) => unlock.stream ?? {})),
   }), [payload.stream, verifiedUnlocks]);
   const unlockedVideoIds = useMemo(() => new Set(Object.values(verifiedUnlocks).map((unlock) => unlock.videoId)), [verifiedUnlocks]);
+  const applyPaidUnlock = useCallback((unlock: PaidUnlockSessionPayload) => {
+    setVerifiedUnlocks((current) => ({ ...current, [unlock.videoId]: unlock }));
+    const index = gallery.videoItems.findIndex((video) => video.id === unlock.videoId);
+    if (index >= 0) setSelectedFilm(publicPreviewFilm(gallery.videoItems[index], index));
+    setLockedFilm(null);
+  }, [gallery.videoItems]);
   const selectFilm = (film: PreviewFilm) => {
     if (film.paidUnlockEnabled && (!film.sourceVideoId || !unlockedVideoIds.has(film.sourceVideoId))) {
       setLockedFilm(film);
@@ -187,9 +194,7 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
     let cancelled = false;
     void verifyPaidUnlockSession(payload.gallery.slug, sessionId).then((unlock) => {
       if (cancelled) return;
-      setVerifiedUnlocks((current) => ({ ...current, [unlock.videoId]: unlock }));
-      const index = gallery.videoItems.findIndex((video) => video.id === unlock.videoId);
-      if (index >= 0) setSelectedFilm(publicPreviewFilm(gallery.videoItems[index], index));
+      applyPaidUnlock(unlock);
       url.searchParams.delete('unlock_session');
       window.history.replaceState({}, '', url.toString());
     }).catch(() => {
@@ -201,7 +206,7 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
     return () => {
       cancelled = true;
     };
-  }, [gallery.videoItems, payload.gallery.slug]);
+  }, [applyPaidUnlock, payload.gallery.slug]);
 
   useEffect(() => {
     if (selectedFilm) return;
@@ -224,7 +229,7 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
         )}
       </section>
       {selectedFilm && <PublicFilmPlayer film={selectedFilm} gallery={gallery} mediaUrls={mediaUrls} streamPlayback={streamPlayback} onClose={() => setSelectedFilm(null)} />}
-      {lockedFilm && <PublicPaidUnlockModal film={lockedFilm} gallery={gallery} onClose={() => setLockedFilm(null)} />}
+      {lockedFilm && <PublicPaidUnlockModal film={lockedFilm} gallery={gallery} onClose={() => setLockedFilm(null)} onUnlock={applyPaidUnlock} />}
     </main>
   );
 }
@@ -254,16 +259,20 @@ function PublicPaidUnlockModal({
   film,
   gallery,
   onClose,
+  onUnlock,
 }: {
   film: PreviewFilm;
   gallery: DashboardGallery;
   onClose: () => void;
+  onUnlock: (unlock: PaidUnlockSessionPayload) => void;
 }) {
   const price = dollarsFromCents(film.paidUnlockPriceCents);
   const label = film.paidUnlockLabel || film.title;
   const tagline = film.paidUnlockTagline || 'Unlock this bonus film to watch it inside the gallery.';
   const [checkoutMessage, setCheckoutMessage] = useState('');
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [recoverEmail, setRecoverEmail] = useState('');
+  const [recoverLoading, setRecoverLoading] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -306,6 +315,35 @@ function PublicPaidUnlockModal({
           </button>
           {checkoutMessage && <small className="public-unlock-note">{checkoutMessage}</small>}
           <small>Secure checkout opens in Stripe. The film unlocks automatically after payment.</small>
+          <form
+            className="public-unlock-recover"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!film.sourceVideoId) return;
+              setRecoverLoading(true);
+              setCheckoutMessage('');
+              void recoverPaidUnlock(gallery.id, film.sourceVideoId, recoverEmail).then((unlock) => {
+                onUnlock(unlock);
+              }).catch((error) => {
+                setCheckoutMessage(error instanceof Error ? error.message : 'Unlock could not be found.');
+              }).finally(() => {
+                setRecoverLoading(false);
+              });
+            }}
+          >
+            <label>
+              <span>Already unlocked?</span>
+              <input
+                autoComplete="email"
+                inputMode="email"
+                onChange={(event) => setRecoverEmail(event.target.value)}
+                placeholder="Email used at checkout"
+                type="email"
+                value={recoverEmail}
+              />
+            </label>
+            <button disabled={recoverLoading} type="submit">{recoverLoading ? 'Checking' : 'Restore unlock'}</button>
+          </form>
         </div>
         <button className="public-unlock-close" aria-label="Close unlock" onClick={onClose}><X size={20} /></button>
       </section>
