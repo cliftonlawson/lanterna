@@ -92,6 +92,10 @@ Done when: reviewed against the SOP's access-control section with findings writt
 The minimum set that catches regressions in the riskiest spots: a Playwright test for public gallery playback (poster-first, iframe only after play), a test that a draft gallery 404s publicly, and unit tests around `dashboardRepository.loadUploadJobs`. Plus the typed route-contract layer the packet suggests, which turns payload-shape bugs (like the paid-unlock R2 shape fix) into compile errors instead of runtime surprises.
 Done when: tests run in CI (or at minimum on every branch before merge) and fail loudly.
 
+### 13. Systematic client-trust audit
+This queue found multiple pre-existing places where the browser was trusted to enforce rules the server should own: gallery status transitions, delivery success fallback, upload usage recording, and paid-unlock purchase reads. Do one deliberate pass instead of waiting for a fifth. Grep every table's RLS policies and every server route for client-trust assumptions: direct client writes, client-owned status transitions, client-inserted accounting rows, public routes that leak existence, and UI-only validation that should be enforced by service-role code.
+Done when: each table and route has been checked, findings are written into the queue or a launch audit doc, and any launch-blocking trust gaps are queued or fixed on their own branches.
+
 ---
 
 ## Explicitly deferred (written down so they're decisions, not holes)
