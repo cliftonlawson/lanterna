@@ -40,6 +40,7 @@ Done when: sending a published gallery flips it to delivered with a timestamp, a
 
 ### 6. reconcile_usage: build the small worker or cut it explicitly
 13 pending tasks and nothing drains them. Two acceptable outcomes: a minimal scheduled worker (or admin command) that processes the queue and updates `account_usage`, or a written decision that usage reconciliation is post-launch, with the task generation turned off so the queue stops growing. What's not acceptable is a queue that silently piles up, because that trains everyone to ignore the outbox, and the outbox is what makes media deletion safe later.
+Closed as written deferral 2026-07-07: `reconcile_usage` task generation is off, existing pending `reconcile_usage` rows were marked done, and stock-meter reconciliation is deferred until retention/cost automation work.
 Done when: the pending count goes to zero and stays controlled, or generation is off and the deferral is written in the spec.
 
 ### 7. Upload allowance gate, verified

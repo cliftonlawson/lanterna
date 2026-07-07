@@ -227,19 +227,21 @@ async function uploadComplete(request, env) {
     });
   }
 
-  await supabaseRest(env, 'media_tasks', {
-    method: 'POST',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({
-      account_id: accountId,
-      gallery_id: gallery.id,
-      id: crypto.randomUUID(),
-      task_type: targetType === 'photo' ? 'reconcile_usage' : 'generate_web_copy',
-      payload: { r2_key: r2Key, stream_uid: streamUid, target_id: targetId, target_type: targetType },
-      status: 'pending',
-      video_id: targetType === 'video' ? targetId : null,
-    }),
-  });
+  if (targetType === 'video') {
+    await supabaseRest(env, 'media_tasks', {
+      method: 'POST',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({
+        account_id: accountId,
+        gallery_id: gallery.id,
+        id: crypto.randomUUID(),
+        task_type: 'generate_web_copy',
+        payload: { r2_key: r2Key, stream_uid: streamUid, target_id: targetId, target_type: targetType },
+        status: 'pending',
+        video_id: targetId,
+      }),
+    });
+  }
 
   return json({ ok: true });
 }
@@ -469,20 +471,6 @@ async function backgroundComplete(request, env) {
     body: JSON.stringify({ background_r2_key: r2Key, background_type: 'image' }),
   });
 
-  await supabaseRest(env, 'media_tasks', {
-    method: 'POST',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({
-      account_id: accountId,
-      gallery_id: gallery.id,
-      id: crypto.randomUUID(),
-      payload: { bytes, r2_key: r2Key, target_type: 'background' },
-      status: 'pending',
-      task_type: 'reconcile_usage',
-      video_id: null,
-    }),
-  });
-
   return json({ ok: true, r2Key });
 }
 
@@ -521,20 +509,6 @@ async function posterComplete(request, env) {
     method: 'PATCH',
     headers: { prefer: 'return=minimal' },
     body: JSON.stringify({ poster_r2_key: r2Key }),
-  });
-
-  await supabaseRest(env, 'media_tasks', {
-    method: 'POST',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({
-      account_id: accountId,
-      gallery_id: gallery.id,
-      id: crypto.randomUUID(),
-      payload: { bytes, r2_key: r2Key, target_type: 'poster' },
-      status: 'pending',
-      task_type: 'reconcile_usage',
-      video_id: videoId,
-    }),
   });
 
   return json({ ok: true, r2Key });
@@ -585,20 +559,6 @@ async function posterCaptureFrame(request, env) {
     method: 'PATCH',
     headers: { prefer: 'return=minimal' },
     body: JSON.stringify({ poster_r2_key: key }),
-  });
-
-  await supabaseRest(env, 'media_tasks', {
-    method: 'POST',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({
-      account_id: accountId,
-      gallery_id: gallery.id,
-      id: crypto.randomUUID(),
-      payload: { bytes, r2_key: key, target_type: 'poster' },
-      status: 'pending',
-      task_type: 'reconcile_usage',
-      video_id: videoId,
-    }),
   });
 
   const poster = await createR2PresignedGetUrl(env, { key });
