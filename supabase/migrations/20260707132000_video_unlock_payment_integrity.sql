@@ -12,6 +12,9 @@ ALTER TABLE public.video_unlock_purchases
   DROP CONSTRAINT IF EXISTS video_unlock_purchases_buyer_email_present;
 
 ALTER TABLE public.video_unlock_purchases
+  DROP CONSTRAINT IF EXISTS video_unlock_purchases_buyer_email_required_when_complete;
+
+ALTER TABLE public.video_unlock_purchases
   ADD CONSTRAINT video_unlock_purchases_buyer_email_required_when_complete
   CHECK (
     status IN ('pending', 'failed')
