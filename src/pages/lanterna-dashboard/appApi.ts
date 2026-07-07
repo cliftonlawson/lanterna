@@ -110,7 +110,15 @@ export async function completeUpload(input: CompleteUploadInput) {
 }
 
 export async function processUploadedVideos(galleryId: string, videoId?: string) {
-  return postApi<{ checked: number; pending: number; processed: number; processedVideoIds: string[] }>('/api/media/process-ready', {
+  return postApi<{
+    checked: number;
+    errored: number;
+    erroredVideoIds: string[];
+    expiredUploadJobs: number;
+    pending: number;
+    processed: number;
+    processedVideoIds: string[];
+  }>('/api/media/process-ready', {
     galleryId,
     videoId: videoId ? videoDatabaseId(videoId) : undefined,
   });

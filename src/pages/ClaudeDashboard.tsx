@@ -20,6 +20,7 @@ import {
   saveDashboardGalleries,
   saveUploadJobs,
   saveWorkspaceAccount,
+  softDeleteGalleryMedia,
 } from './lanterna-dashboard/dashboardRepository';
 import { invalidRecipientEmails, parseRecipientEmails } from './lanterna-dashboard/delivery';
 import { GalleryStudioScreen } from './lanterna-dashboard/GalleryStudioScreen';
@@ -95,9 +96,14 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     .filter(videoNeedsProcessingRefresh)
     .map((video) => video.id)
     .join('|') ?? '';
+  const processingUploadJobIds = uploadJobs
+    .filter((job) => galleryVideoJobNeedsProcessing(job, activeGalleryId))
+    .map((job) => job.id)
+    .sort()
+    .join('|');
 
   useEffect(() => {
-    if (!activeGalleryId || !processingVideoIds) return undefined;
+    if (view !== 'upload' || !activeGalleryId || (!processingVideoIds && !processingUploadJobIds)) return undefined;
 
     let cancelled = false;
     let inFlight = false;
@@ -109,9 +115,12 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
       try {
         const result = await processUploadedVideos(galleryId);
-        if (cancelled || (result.processed === 0 && result.checked > 0)) return;
+        if (cancelled) return;
 
-        const refreshedGalleries = await loadDashboardGalleries();
+        const [refreshedGalleries, refreshedJobs] = await Promise.all([
+          loadDashboardGalleries(),
+          loadUploadJobs(),
+        ]);
         if (cancelled) return;
 
         const refreshedActive = refreshedGalleries.find((gallery) => gallery.id === galleryId);
@@ -119,20 +128,27 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
         setGalleries(refreshedGalleries);
         setActiveId(refreshedActive.id);
-        await saveDashboardGalleries(refreshedGalleries, 'upload');
+        setUploadJobs(refreshedJobs);
 
         const completedVideoIds = new Set(result.processedVideoIds ?? []);
-        if (completedVideoIds.size > 0) {
+        const erroredVideoIds = new Set(result.erroredVideoIds ?? []);
+        if (completedVideoIds.size > 0 || erroredVideoIds.size > 0) {
           setUploadJobs((current) => {
-            const next = current.map((job) => galleryVideoJobNeedsProcessing(job, galleryId) && job.targetId && completedVideoIds.has(job.targetId)
-              ? { ...job, status: 'complete' as const, bytesUploaded: job.bytesTotal }
-              : job);
+            const byId = new Map(refreshedJobs.map((job) => [job.id, job]));
+            const next = current.map((job) => {
+              const refreshed = byId.get(job.id) ?? job;
+              if (!galleryVideoJobNeedsProcessing(refreshed, galleryId) || !refreshed.targetId) return refreshed;
+              if (completedVideoIds.has(refreshed.targetId)) return { ...refreshed, status: 'complete' as const, bytesUploaded: refreshed.bytesTotal };
+              if (erroredVideoIds.has(refreshed.targetId)) return { ...refreshed, errorMessage: 'Video processing failed', status: 'errored' as const };
+              return refreshed;
+            });
             void saveUploadJobs(next);
             return next;
           });
         }
 
-        if (result.processed > 0) showToast('Replacement video is ready');
+        if (result.errored > 0) showToast('Video processing failed');
+        else if (result.processed > 0) showToast('Video is ready');
       } catch {
         // Keep this quiet; the manual "Finish processing" action still surfaces errors.
       } finally {
@@ -147,7 +163,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeGalleryId, processingVideoIds]);
+  }, [activeGalleryId, processingUploadJobIds, processingVideoIds, view]);
 
   const commitGalleries = (
     updater: (current: DashboardGallery[]) => DashboardGallery[],
@@ -202,6 +218,27 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
   const updateActiveGallery = (patch: Partial<DashboardGallery>) => {
     commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? { ...gallery, ...patch } : gallery), 'autosave');
+  };
+
+  const deleteActiveVideo = async (videoId: string) => {
+    const video = activeGallery.videoItems.find((item) => item.id === videoId);
+    if (!video) return;
+
+    const nextVideos = activeGallery.videoItems.filter((item) => item.id !== videoId);
+    const nextFeaturedFilm = activeGallery.design.featuredFilm === video.title
+      ? nextVideos[0]?.title ?? ''
+      : activeGallery.design.featuredFilm;
+
+    const result = await softDeleteGalleryMedia(activeGallery.id, videoId, 'video');
+    commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? {
+      ...gallery,
+      coverChosen: nextVideos.length > 0 ? gallery.coverChosen : false,
+      design: { ...gallery.design, featuredFilm: nextFeaturedFilm },
+      videoItems: nextVideos,
+      videos: nextVideos.length,
+    } : gallery), 'video');
+
+    if (result.mode === 'local') showToast(result.reason ?? 'Film removed locally; database delete did not complete');
   };
 
   const createGallery = (event: React.FormEvent<HTMLFormElement>) => {
@@ -526,6 +563,19 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         }
 
         const localProcessingJobs = uploadJobs.filter((job) => galleryVideoJobNeedsProcessing(job, activeGallery.id));
+        if (result.errored > 0) {
+          const erroredVideoIds = new Set(result.erroredVideoIds ?? []);
+          const updatedJobs = uploadJobs.map((job) => galleryVideoJobNeedsProcessing(job, activeGallery.id)
+            && job.targetId
+            && erroredVideoIds.has(job.targetId)
+            ? { ...job, errorMessage: 'Video processing failed', status: 'errored' as const }
+            : job);
+          setUploadJobs(updatedJobs);
+          await saveUploadJobs(updatedJobs);
+          showToast('Video processing failed');
+          return;
+        }
+
         if (result.pending > 0) {
           showToast('Cloudflare is still processing that video');
           return;
@@ -554,14 +604,18 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       }
 
       const processedVideoIds = new Set(result.processedVideoIds ?? []);
+      const erroredVideoIds = new Set(result.erroredVideoIds ?? []);
       const updatedJobs = uploadJobs.map((job) => galleryVideoJobNeedsProcessing(job, activeGallery.id)
         && job.targetId
-        && processedVideoIds.has(job.targetId)
-        ? { ...job, status: 'complete' as const, bytesUploaded: job.bytesTotal }
+        ? processedVideoIds.has(job.targetId)
+          ? { ...job, status: 'complete' as const, bytesUploaded: job.bytesTotal }
+          : erroredVideoIds.has(job.targetId)
+            ? { ...job, errorMessage: 'Video processing failed', status: 'errored' as const }
+            : job
         : job);
       setUploadJobs(updatedJobs);
       await saveUploadJobs(updatedJobs);
-      showToast(`${result.processed} ${result.processed === 1 ? 'video' : 'videos'} ready`);
+      showToast(result.errored > 0 ? 'Video processing failed' : `${result.processed} ${result.processed === 1 ? 'video' : 'videos'} ready`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Processing update failed');
     }
@@ -641,6 +695,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           gallery={activeGallery}
           publicGalleryBase={workspace.customDomain ?? 'deliver.lanterna.studio'}
           videoId={detailVideoId}
+          onDeleteVideo={deleteActiveVideo}
           onGalleryChange={updateActiveGallery}
           onClose={() => setDetailOpen(false)}
           onShowToast={showToast}
@@ -667,7 +722,7 @@ function videoNeedsProcessingRefresh(video: MediaVideo) {
 function galleryVideoJobNeedsProcessing(job: UploadJob, galleryId: string) {
   return job.galleryId === galleryId
     && job.targetType === 'video'
-    && (job.status === 'processing' || job.status === 'uploading');
+    && job.status === 'processing';
 }
 
 function removePendingMediaFromGallery(gallery: DashboardGallery, targetId: string | null, targetType: 'video' | 'photo') {
