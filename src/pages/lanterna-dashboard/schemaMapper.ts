@@ -80,7 +80,7 @@ export type PhotoRecord = {
   id: string;
   gallery_id: string;
   album_id: string | null;
-  r2_key: string;
+  r2_key: string | null;
   r2_bytes: number;
   width: number | null;
   height: number | null;

@@ -68,10 +68,15 @@ async function galleryPreflight(env, gallery) {
 
   const videos = await supabaseRest(
     env,
-    `videos?select=id&gallery_id=eq.${encodeURIComponent(gallery.id)}&deleted_at=is.null&limit=1`,
+    `videos?select=id,r2_key,web_copy_r2_key,stream_uid,stream_ready,processing_status&gallery_id=eq.${encodeURIComponent(gallery.id)}&visible_in_gallery=eq.true&deleted_at=is.null&limit=25`,
     { headers: { accept: 'application/json' } },
   );
-  if (!videos?.[0]) return { code: 'video_required', message: 'Add at least one film before publishing.' };
+  const readyPlayableVideo = (videos || []).find((video) => video.processing_status === 'ready' && (
+    video.r2_key
+    || video.web_copy_r2_key
+    || (video.stream_uid && video.stream_ready !== false)
+  ));
+  if (!readyPlayableVideo) return { code: 'ready_video_required', message: 'Add at least one ready, playable film before publishing.' };
 
   if (!gallery.cover_video_id && !gallery.cover_photo_id) {
     return { code: 'cover_required', message: 'Choose a cover before publishing.' };
@@ -199,6 +204,31 @@ async function uploadTargetExists(env, galleryId, targetId, targetType) {
   return rows?.length > 0;
 }
 
+function mediaKeyPrefix({ accountId, galleryId, targetId, targetType }) {
+  const folder = targetType === 'photo' ? 'photos' : targetType === 'background' ? 'backgrounds' : 'films';
+  return `${accountId}/${galleryId}/${folder}/${targetId}/`;
+}
+
+function requireMediaKeyPrefix(key, { accountId, galleryId, targetId, targetType }) {
+  if (!key) return;
+  const prefix = mediaKeyPrefix({ accountId, galleryId, targetId, targetType });
+  if (!key.startsWith(prefix)) throw new Error(`${targetType} key does not belong to this gallery target.`);
+}
+
+async function uploadJobForTarget(env, { accountId, galleryId, targetId, targetType, uploadJobId }) {
+  if (!uploadJobId) throw new Error('uploadJobId is required.');
+  const rows = await supabaseRest(
+    env,
+    `upload_jobs?select=id,gallery_id,target_id,target_type,status,stream_upload_id&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  const job = rows?.[0];
+  if (!job || job.gallery_id !== galleryId || job.target_id !== targetId || job.target_type !== targetType) {
+    throw new Error('Upload job does not match this upload target.');
+  }
+  return job;
+}
+
 function streamStatusErrorIsTerminal(error) {
   const message = error instanceof Error ? error.message : String(error || '');
   return STREAM_TERMINAL_ERROR_PATTERN.test(message);
@@ -234,6 +264,10 @@ async function uploadSlot(request, env) {
   if (!uploadTargetTypes.has(targetType)) throw new Error(`Unsupported upload target type: ${targetType}`);
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  if (!await uploadTargetExists(env, gallery.id, targetId, targetType)) {
+    return errorJson('Upload target no longer exists. Reload and retry the upload.', 409);
+  }
+
   const bytesTotal = Number(body.bytesTotal || 0);
   const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
   if (allowanceError) return allowanceError;
@@ -242,21 +276,6 @@ async function uploadSlot(request, env) {
   const key = mediaObjectKey({ accountId, galleryId, targetType, targetId, fileName });
   const r2 = await createR2PresignedPutUrl(env, { key, contentType });
   const uploadJobId = crypto.randomUUID();
-
-  await supabaseRest(env, 'upload_jobs', {
-    method: 'POST',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({
-      account_id: accountId,
-      bytes_total: bytesTotal,
-      bytes_uploaded: 0,
-      gallery_id: gallery.id,
-      id: uploadJobId,
-      status: 'pending',
-      target_id: targetId,
-      target_type: targetType,
-    }),
-  });
 
   let stream = null;
   if (targetType === 'video' && streamDirectUploadsEnabled(env) && env.CLOUDFLARE_STREAM_API_TOKEN && env.CLOUDFLARE_ACCOUNT_ID) {
@@ -269,6 +288,22 @@ async function uploadSlot(request, env) {
       stream = null;
     }
   }
+
+  await supabaseRest(env, 'upload_jobs', {
+    method: 'POST',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({
+      account_id: accountId,
+      bytes_total: bytesTotal,
+      bytes_uploaded: 0,
+      gallery_id: gallery.id,
+      id: uploadJobId,
+      status: 'pending',
+      stream_upload_id: stream?.streamUploadId ?? null,
+      target_id: targetId,
+      target_type: targetType,
+    }),
+  });
 
   return json({
     galleryId,
@@ -296,6 +331,18 @@ async function uploadComplete(request, env) {
   if (!await uploadTargetExists(env, gallery.id, targetId, targetType)) {
     await markUploadJobErrored(env, accountId, body.uploadJobId);
     return errorJson('Upload target no longer exists. Reload and retry the upload.', 409);
+  }
+  const uploadJob = await uploadJobForTarget(env, {
+    accountId,
+    galleryId: gallery.id,
+    targetId,
+    targetType,
+    uploadJobId: body.uploadJobId,
+  });
+  requireMediaKeyPrefix(r2Key, { accountId, galleryId: gallery.id, targetId, targetType });
+  if (streamUid && uploadJob.stream_upload_id !== streamUid) {
+    await markUploadJobErrored(env, accountId, body.uploadJobId);
+    return errorJson('Stream upload does not match this upload job.', 409);
   }
 
   if (targetType === 'video' && body.stageReplacement === true && streamUid) {
@@ -390,6 +437,29 @@ async function uploadComplete(request, env) {
   });
 
   return json({ ok: true });
+}
+
+async function clearUploadJob(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const uploadJobId = requireString(body, 'uploadJobId');
+  const rows = await supabaseRest(
+    env,
+    `upload_jobs?select=id,status&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  const job = rows?.[0];
+  if (!job) return errorJson('Upload job not found.', 404);
+  if (!['complete', 'errored'].includes(job.status)) {
+    return errorJson('Only complete or errored upload jobs can be cleared.', 409);
+  }
+
+  await supabaseRest(env, `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}`, {
+    method: 'DELETE',
+    headers: { prefer: 'return=minimal' },
+  });
+
+  return json({ ok: true, uploadJobId });
 }
 
 async function processReady(request, env) {
@@ -667,6 +737,7 @@ async function backgroundComplete(request, env) {
   const bytes = Number(body.bytes || 0);
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  requireMediaKeyPrefix(r2Key, { accountId, galleryId: gallery.id, targetId: 'hero', targetType: 'background' });
 
   await supabaseRest(env, `gallery_design?gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
     method: 'PATCH',
@@ -1053,6 +1124,7 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     const path = routePath(request);
     if (request.method === 'POST' && path === 'upload/slot') return await uploadSlot(request, env);
     if (request.method === 'POST' && path === 'upload/complete') return await uploadComplete(request, env);
+    if (request.method === 'POST' && path === 'upload/clear-job') return await clearUploadJob(request, env);
     if (request.method === 'POST' && path === 'media/process-ready') return await processReady(request, env);
     if (request.method === 'POST' && path === 'background/slot') return await backgroundSlot(request, env);
     if (request.method === 'POST' && path === 'background/complete') return await backgroundComplete(request, env);
