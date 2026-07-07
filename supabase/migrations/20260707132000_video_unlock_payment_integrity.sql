@@ -22,4 +22,5 @@ CREATE INDEX IF NOT EXISTS video_unlock_purchases_recover_idx
   ON public.video_unlock_purchases(gallery_id, video_id, lower(buyer_email))
   WHERE status = 'complete' AND buyer_email IS NOT NULL;
 
+DROP POLICY IF EXISTS "members can read video unlock purchases" ON public.video_unlock_purchases;
 DROP POLICY IF EXISTS "members can manage video unlock purchases" ON public.video_unlock_purchases;
