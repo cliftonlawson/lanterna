@@ -130,6 +130,20 @@ export async function clearUploadJobRemote(uploadJobId: string) {
   });
 }
 
+export async function deleteGalleryMediaRemote(input: {
+  galleryId: string;
+  targetId: string;
+  targetType: UploadTargetType;
+}) {
+  const targetId = input.targetType === 'video' ? videoDatabaseId(input.targetId) : photoDatabaseId(input.targetId);
+
+  return postApi<{ ok: boolean; targetId: string; targetType: UploadTargetType }>('/api/media/delete', {
+    galleryId: input.galleryId,
+    targetId,
+    targetType: input.targetType,
+  });
+}
+
 type BackgroundSlotResponse = {
   galleryId: string;
   r2: UploadSlotResponse['r2'];

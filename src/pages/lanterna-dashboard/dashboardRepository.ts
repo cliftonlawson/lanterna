@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { clearUploadJobRemote, recordGalleryDelivery } from './appApi';
+import { clearUploadJobRemote, deleteGalleryMediaRemote, recordGalleryDelivery } from './appApi';
 import { parseRecipientEmails, upsertSentRecipients } from './delivery';
 import {
   loadStoredGalleries,
@@ -13,9 +13,7 @@ import { defaultDeliveryDraft, defaultWorkspaceAccount, type DashboardGallery, t
 import {
   canPersistGalleryToSchema,
   galleryToSchemaBundle,
-  photoDatabaseId,
   schemaBundleToGallery,
-  videoDatabaseId,
   type AlbumRecord,
   type DeliveryRecipientRecord,
   type GalleryDesignRecord,
@@ -527,19 +525,7 @@ export async function softDeleteGalleryMedia(
   if (!isSupabaseConfigured) return { mode: 'local', ok: true };
 
   try {
-    const accountId = await currentAccountId();
-    if (!accountId) throw new Error('Supabase account membership is missing.');
-
-    const table = targetType === 'video' ? 'videos' : 'photos';
-    const databaseId = targetType === 'video' ? videoDatabaseId(targetId) : photoDatabaseId(targetId);
-    const { error } = await supabase
-      .from(table)
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('gallery_id', galleryId)
-      .eq('id', databaseId)
-      .is('deleted_at', null);
-
-    if (error) throw error;
+    await deleteGalleryMediaRemote({ galleryId, targetId, targetType });
 
     return { mode: 'supabase', ok: true };
   } catch (error) {

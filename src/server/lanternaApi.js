@@ -462,6 +462,88 @@ async function clearUploadJob(request, env) {
   return json({ ok: true, uploadJobId });
 }
 
+async function deleteGalleryMedia(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const targetId = requireString(body, 'targetId');
+  const targetType = requireString(body, 'targetType');
+  if (!uploadTargetTypes.has(targetType)) throw new Error('targetType must be video or photo.');
+
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const table = targetType === 'photo' ? 'photos' : 'videos';
+  const select = targetType === 'photo'
+    ? 'id,r2_key,r2_bytes,processing_status'
+    : 'id,r2_key,web_copy_r2_key,poster_r2_key,stream_uid,processing_status';
+  const rows = await supabaseRest(
+    env,
+    `${table}?select=${select}&gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(targetId)}&deleted_at=is.null&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  const media = rows?.[0];
+  if (!media) return errorJson('Media not found for this gallery.', 404);
+
+  const deletedAt = new Date().toISOString();
+  await supabaseRest(env, `${table}?gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(targetId)}&deleted_at=is.null`, {
+    method: 'PATCH',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({ deleted_at: deletedAt }),
+  });
+
+  const r2Keys = targetType === 'photo'
+    ? [media.r2_key].filter(Boolean)
+    : [media.r2_key, media.web_copy_r2_key, media.poster_r2_key].filter(Boolean);
+  for (const r2Key of r2Keys) {
+    await supabaseRest(env, 'media_tasks', {
+      method: 'POST',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({
+        account_id: accountId,
+        gallery_id: gallery.id,
+        id: crypto.randomUUID(),
+        task_type: 'delete_r2',
+        payload: {
+          deleted_at: deletedAt,
+          r2_key: r2Key,
+          target_id: targetId,
+          target_type: targetType,
+        },
+        status: 'pending',
+        video_id: targetType === 'video' ? targetId : null,
+      }),
+    });
+  }
+
+  if (targetType === 'video' && media.stream_uid) {
+    await supabaseRest(env, 'media_tasks', {
+      method: 'POST',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({
+        account_id: accountId,
+        gallery_id: gallery.id,
+        id: crypto.randomUUID(),
+        task_type: 'delete_stream',
+        payload: {
+          deleted_at: deletedAt,
+          stream_uid: media.stream_uid,
+          target_id: targetId,
+          target_type: targetType,
+        },
+        status: 'pending',
+        video_id: targetId,
+      }),
+    });
+  }
+
+  return json({
+    cleanupTasks: r2Keys.length + (targetType === 'video' && media.stream_uid ? 1 : 0),
+    deletedAt,
+    ok: true,
+    targetId,
+    targetType,
+  });
+}
+
 async function processReady(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
@@ -1125,6 +1207,7 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'upload/slot') return await uploadSlot(request, env);
     if (request.method === 'POST' && path === 'upload/complete') return await uploadComplete(request, env);
     if (request.method === 'POST' && path === 'upload/clear-job') return await clearUploadJob(request, env);
+    if (request.method === 'POST' && path === 'media/delete') return await deleteGalleryMedia(request, env);
     if (request.method === 'POST' && path === 'media/process-ready') return await processReady(request, env);
     if (request.method === 'POST' && path === 'background/slot') return await backgroundSlot(request, env);
     if (request.method === 'POST' && path === 'background/complete') return await backgroundComplete(request, env);
