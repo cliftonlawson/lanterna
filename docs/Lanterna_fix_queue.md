@@ -60,6 +60,11 @@ Done when: an old abandoned `pending` or `uploading` job is moved to `errored`, 
 ### 8. Write the paid unlock spec
 One page into `/docs`: the purchase flow, the `video_unlock_purchases` states, what a session verify does, what happens on webhook vs return-URL verification, refund behavior (even if "manual via Stripe dashboard, no product surface" for v1), and what an unlocked viewer can access (stream only, or download too). This exists so the next fix isn't archaeology.
 Done when: the doc exists and matches the code, or the code is corrected to match the doc.
+Verification: `docs/paid_unlock_spec.md` added 2026-07-07. It documents current code behavior, including the fact that checkout creation does not write a pending purchase row, refunds are manual-only for v1, unlock grants Stream plus R2 media when available, downloads still obey gallery/video download flags, and unlock state is browser-session-local after return verification.
+
+### 8a. Paid unlock trailer toggle is not implemented publicly
+The video drawer stores `paid_unlock_trailer` and tells studios the locked tile can show a teaser clip, but the public gallery intentionally withholds playback URLs for locked paid videos and only includes the poster. Decide whether this toggle should be removed from v1 or implemented as a real teaser asset/path.
+Done when: the studio UI no longer promises trailer behavior that the public gallery cannot provide, or locked paid videos receive an explicit teaser playback path that does not expose the full film.
 
 ### 9. Stripe test-mode E2E
 Full loop in Stripe test mode: locked film, checkout, payment, webhook delivery, return with `unlock_session`, verification, media unlocked. Include the failure paths: abandoned checkout, webhook retry, verify called twice (the session-uniqueness constraint exists, prove it holds).
