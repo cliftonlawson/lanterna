@@ -1277,6 +1277,11 @@
 .public-unlock-body button { align-self: flex-start; min-height: 48px; margin-top: 22px; padding: 12px 22px; border: 0; border-radius: 99px; background: #FBF6EE; color: #21160E; font-weight: 900; cursor: pointer; box-shadow: 0 14px 40px rgba(0,0,0,.22); }
 .public-unlock-body small { display: block; margin-top: 14px; color: #8F8679; font-size: 12px; line-height: 1.45; }
 .public-unlock-note { max-width: 36ch; color: #E2C593 !important; }
+.public-unlock-recover { margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.1); display: grid; gap: 10px; }
+.public-unlock-recover label { display: grid; gap: 8px; color: #AFA69A; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.public-unlock-recover input { width: 100%; min-height: 44px; border: 1px solid rgba(255,255,255,.14); border-radius: 14px; background: rgba(255,255,255,.06); color: #FBF6EE; padding: 0 14px; font: inherit; letter-spacing: 0; text-transform: none; }
+.public-unlock-recover input::placeholder { color: rgba(251,246,238,.42); }
+.public-unlock-recover button { align-self: flex-start; min-height: 42px; margin-top: 0; padding: 10px 18px; box-shadow: none; }
 .public-unlock-close { position: absolute; top: 16px; right: 16px; width: 42px; height: 42px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.12); border-radius: 99px; background: rgba(255,255,255,.08); color: #F7F1E7; cursor: pointer; }
 
 @media (max-width: 1180px) {

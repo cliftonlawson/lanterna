@@ -68,6 +68,8 @@ Done when: the studio UI no longer promises trailer behavior that the public gal
 
 ### 9. Stripe test-mode E2E
 Full loop in Stripe test mode: locked film, checkout, payment, webhook delivery, return with `unlock_session`, verification, media unlocked. Include the failure paths: abandoned checkout, webhook retry, verify called twice (the session-uniqueness constraint exists, prove it holds).
+
+Verification: live Stripe test mode 2026-07-07. Checkout creation writes a pending `video_unlock_purchases` row before redirect. `checkout.session.completed` is the authoritative unlock path; return verification only reads the completed row and polls while the webhook catches up. Closed-tab payment unlocked through webhook without visiting the return URL. Email recovery restored the unlock from a second browser/device. Duplicate completed webhook and double session verify kept one purchase row and preserved `unlocked_at`. Abandoned checkout stayed pending with no unlock. Declined-card `payment_intent.payment_failed` marked the row failed with no unlock.
 Done when: the happy path and the three failure paths all behave, documented in the packet's verification section.
 
 ---
