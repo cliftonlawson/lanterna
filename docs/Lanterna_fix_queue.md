@@ -53,6 +53,11 @@ Verification: live temp-account check passed 2026-07-07. Over-allowance `/api/up
 Item 7 reserves allowance from `upload_jobs` in `pending` or `uploading`, but there is no stale-job expiry yet. Add a timeout that marks abandoned active jobs `errored` so their reserved bytes stop blocking future upload slots. Keep it small: either a lazy sweep inside the slot gate before reserved allowance is calculated, or a tiny scheduled/admin check.
 Done when: an old abandoned `pending` or `uploading` job is moved to `errored`, the next slot calculation no longer counts its `bytes_total`, and recent active jobs remain untouched.
 
+### 7b. Orphan Stream assets from failed upload test
+Two 2026-07-07 4K test uploads completed in Cloudflare Stream but lost their matching `videos` rows during the pre-7a autosave deletion bug. Decide deliberately whether to recover them into database rows or delete them from Cloudflare Stream. Do not leave orphaned Stream assets drifting, since they burn stored minutes without a gallery row and are exactly the kind of database-vs-provider mismatch `reconcile_usage` should eventually catch.
+Known orphan Stream UIDs: `43f14a747652f4809f558eee6a41846e` for target video `00b2d9c7-4904-4fe1-889d-8bff2dd4e476`, and `748396d55e63d794b27f8496f2e2fbed` for target video `e251a7da-1f95-4e73-ba69-1c2e3fe3d196`.
+Done when: both orphan assets are either represented by intentional `videos` rows and matching upload/job state, or deleted from Cloudflare Stream with the decision noted.
+
 ---
 
 ## P2 — Paid unlocks, legitimized
