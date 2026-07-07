@@ -17,7 +17,6 @@ import {
   loadDashboardGalleries,
   loadUploadJobs,
   loadWorkspaceAccount,
-  recordUploadUsage,
   saveDashboardGalleries,
   saveUploadJobs,
   saveWorkspaceAccount,
@@ -426,7 +425,6 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           void saveDashboardGalleries(updated, 'upload');
           return updated;
         });
-        await recordUploadUsage(activeGallery.id, file.size);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Upload failed';
         setJob(jobId, { errorMessage: message, status: 'errored' });
@@ -459,6 +457,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     try {
       showToast('Uploading background');
       const slot = await createBackgroundUploadSlot({
+        bytesTotal: file.size,
         contentType: file.type || 'application/octet-stream',
         fileName: file.name,
         galleryId: activeGallery.id,
@@ -481,7 +480,6 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       } : gallery);
       setGalleries(updatedGalleries);
       await saveDashboardGalleries(updatedGalleries, 'upload');
-      await recordUploadUsage(activeGallery.id, file.size);
       updateWorkspace({ allowanceUsedGb: Number((workspace.allowanceUsedGb + file.size / 1024 / 1024 / 1024).toFixed(2)) });
       showToast('Background uploaded');
     } catch (error) {

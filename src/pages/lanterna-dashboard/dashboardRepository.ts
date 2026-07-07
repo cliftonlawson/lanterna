@@ -540,29 +540,6 @@ export async function clearUploadJob(job: UploadJob): Promise<SaveResult> {
   }
 }
 
-export async function recordUploadUsage(galleryId: string, bytes: number): Promise<SaveResult> {
-  if (!isSupabaseConfigured) return { mode: 'local', ok: true };
-
-  try {
-    const accountId = await currentAccountId();
-    if (!accountId) throw new Error('Supabase account membership is missing.');
-
-    const gb = bytes / 1024 / 1024 / 1024;
-    const { error } = await supabase.from('usage_events').insert({
-      account_id: accountId,
-      gb,
-      gallery_id: galleryId,
-    });
-
-    if (error) throw error;
-
-    return { mode: 'supabase', ok: true };
-  } catch (error) {
-    console.warn('Lanterna usage event stayed local because Supabase save failed', error);
-    return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase usage save failed' };
-  }
-}
-
 export async function saveDashboardGalleries(galleries: DashboardGallery[], reason: SaveReason = 'autosave'): Promise<SaveResult> {
   const localResult = persistLocal(galleries);
 

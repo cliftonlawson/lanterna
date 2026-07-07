@@ -45,7 +45,13 @@ Done when: the pending count goes to zero and stays controlled, or generation is
 
 ### 7. Upload allowance gate, verified
 The allowance defaults migration exists. Verify the flow meter actually gates: an account at/over its allowance gets refused an upload slot with a clear reason. This is the billing model's one launch-critical enforcement point.
-Done when: an over-allowance account cannot get an upload slot, and the refusal reason is surfaced in the UI.
+Scope: server-side gate in upload slot routes, usage recording from upload completion routes, RLS blocking direct client inserts to `usage_events`, and the client-side check kept only as friendly pre-flight UI.
+Done when: an over-allowance account cannot get an upload slot with a surfaced reason, and an upload recorded through a raw API call increments `allowance_used_gb` without the client inserting usage.
+Verification: live temp-account check passed 2026-07-07. Over-allowance `/api/upload/slot` returned 422 `upload_allowance_exceeded`; raw `/api/upload/complete` moved `allowance_used_gb` from 0 to 1; authenticated client insert into `usage_events` returned 403 from RLS.
+
+### 7a. Stale upload-job expiry frees reservations
+Item 7 reserves allowance from `upload_jobs` in `pending` or `uploading`, but there is no stale-job expiry yet. Add a timeout that marks abandoned active jobs `errored` so their reserved bytes stop blocking future upload slots. Keep it small: either a lazy sweep inside the slot gate before reserved allowance is calculated, or a tiny scheduled/admin check.
+Done when: an old abandoned `pending` or `uploading` job is moved to `errored`, the next slot calculation no longer counts its `bytes_total`, and recent active jobs remain untouched.
 
 ---
 

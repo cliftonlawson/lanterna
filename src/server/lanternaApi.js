@@ -9,6 +9,7 @@ import { createPaidUnlockCheckout, paidUnlockSession, stripeWebhook } from './st
 const uploadTargetTypes = new Set(['video', 'photo']);
 const PUBLIC_STREAM_PLAYBACK_TTL_SECONDS = 21600;
 const STREAM_BASIC_POST_MAX_BYTES = 200 * 1024 * 1024;
+const DEFAULT_UPLOAD_ALLOWANCE_GB = 50;
 
 function publicBaseUrl(env) {
   return String(env.PUBLIC_DELIVERY_BASE_URL || env.APP_URL || 'http://127.0.0.1:5173').replace(/\/+$/, '');
@@ -82,6 +83,72 @@ async function requireGalleryPreflight(env, gallery) {
   return errorJson(failure.message, 422, { code: failure.code });
 }
 
+function bytesToGb(bytes) {
+  const value = Number(bytes || 0);
+  return Number.isFinite(value) && value > 0 ? value / 1024 / 1024 / 1024 : 0;
+}
+
+async function accountUsage(env, accountId) {
+  const rows = await supabaseRest(
+    env,
+    `account_usage?select=allowance_used_gb,allowance_total_gb&account_id=eq.${encodeURIComponent(accountId)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  const usage = rows?.[0] ?? {};
+  const allowanceTotalGb = Number(usage.allowance_total_gb ?? DEFAULT_UPLOAD_ALLOWANCE_GB);
+
+  return {
+    allowanceTotalGb: allowanceTotalGb > 0 ? allowanceTotalGb : DEFAULT_UPLOAD_ALLOWANCE_GB,
+    allowanceUsedGb: Number(usage.allowance_used_gb ?? 0),
+  };
+}
+
+async function activeUploadReservationGb(env, accountId) {
+  const rows = await supabaseRest(
+    env,
+    `upload_jobs?select=bytes_total&account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading)`,
+    { headers: { accept: 'application/json' } },
+  );
+
+  return (rows || []).reduce((sum, job) => sum + bytesToGb(job.bytes_total), 0);
+}
+
+async function requireUploadAllowance(env, accountId, bytesTotal) {
+  const requestedGb = bytesToGb(bytesTotal);
+  if (requestedGb <= 0) return null;
+
+  const usage = await accountUsage(env, accountId);
+  const reservedGb = await activeUploadReservationGb(env, accountId);
+  const availableGb = Math.max(usage.allowanceTotalGb - usage.allowanceUsedGb - reservedGb, 0);
+  if (requestedGb <= availableGb) return null;
+
+  return errorJson('Not enough upload allowance for this upload.', 422, {
+    availableGb: Number(availableGb.toFixed(4)),
+    code: 'upload_allowance_exceeded',
+    requestedGb: Number(requestedGb.toFixed(4)),
+    allowanceTotalGb: usage.allowanceTotalGb,
+    allowanceUsedGb: usage.allowanceUsedGb,
+    reservedGb: Number(reservedGb.toFixed(4)),
+  });
+}
+
+async function recordUploadUsageEvent(env, { accountId, bytes, galleryId, targetId = null, targetType = null }) {
+  const gb = bytesToGb(bytes);
+  if (gb <= 0) return;
+
+  await supabaseRest(env, 'usage_events', {
+    method: 'POST',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({
+      account_id: accountId,
+      gallery_id: galleryId,
+      gb,
+      photo_id: targetType === 'photo' ? targetId : null,
+      video_id: targetType === 'video' ? targetId : null,
+    }),
+  });
+}
+
 async function publishGallery(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
@@ -113,6 +180,9 @@ async function uploadSlot(request, env) {
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
   const bytesTotal = Number(body.bytesTotal || 0);
+  const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
+  if (allowanceError) return allowanceError;
+
   const contentType = String(body.contentType || '').trim() || undefined;
   const key = mediaObjectKey({ accountId, galleryId, targetType, targetId, fileName });
   const r2 = await createR2PresignedPutUrl(env, { key, contentType });
@@ -199,6 +269,14 @@ async function uploadComplete(request, env) {
       }),
     });
 
+    await recordUploadUsageEvent(env, {
+      accountId,
+      bytes,
+      galleryId: gallery.id,
+      targetId,
+      targetType,
+    });
+
     return json({ ok: true, staged: true });
   }
 
@@ -242,6 +320,14 @@ async function uploadComplete(request, env) {
       }),
     });
   }
+
+  await recordUploadUsageEvent(env, {
+    accountId,
+    bytes,
+    galleryId: gallery.id,
+    targetId,
+    targetType,
+  });
 
   return json({ ok: true });
 }
@@ -446,6 +532,9 @@ async function backgroundSlot(request, env) {
   const fileName = requireString(body, 'fileName');
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const allowanceError = await requireUploadAllowance(env, accountId, Number(body.bytesTotal || 0));
+  if (allowanceError) return allowanceError;
+
   const contentType = String(body.contentType || '').trim() || undefined;
   const key = mediaObjectKey({ accountId, galleryId: gallery.id, targetType: 'background', targetId: 'hero', fileName });
   const r2 = await createR2PresignedPutUrl(env, { key, contentType });
@@ -471,6 +560,8 @@ async function backgroundComplete(request, env) {
     body: JSON.stringify({ background_r2_key: r2Key, background_type: 'image' }),
   });
 
+  await recordUploadUsageEvent(env, { accountId, bytes, galleryId: gallery.id });
+
   return json({ ok: true, r2Key });
 }
 
@@ -485,6 +576,9 @@ async function posterSlot(request, env) {
   if (contentType && !contentType.startsWith('image/')) throw new Error('Poster uploads must be image files.');
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const allowanceError = await requireUploadAllowance(env, accountId, Number(body.bytesTotal || 0));
+  if (allowanceError) return allowanceError;
+
   const videos = await supabaseRest(env, `videos?select=id&gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(videoId)}&deleted_at=is.null&limit=1`);
   if (!videos?.[0]) throw new Error('Video not found for this gallery.');
 
@@ -509,6 +603,14 @@ async function posterComplete(request, env) {
     method: 'PATCH',
     headers: { prefer: 'return=minimal' },
     body: JSON.stringify({ poster_r2_key: r2Key }),
+  });
+
+  await recordUploadUsageEvent(env, {
+    accountId,
+    bytes,
+    galleryId: gallery.id,
+    targetId: videoId,
+    targetType: 'video',
   });
 
   return json({ ok: true, r2Key });
@@ -559,6 +661,14 @@ async function posterCaptureFrame(request, env) {
     method: 'PATCH',
     headers: { prefer: 'return=minimal' },
     body: JSON.stringify({ poster_r2_key: key }),
+  });
+
+  await recordUploadUsageEvent(env, {
+    accountId,
+    bytes,
+    galleryId: gallery.id,
+    targetId: videoId,
+    targetType: 'video',
   });
 
   const poster = await createR2PresignedGetUrl(env, { key });
