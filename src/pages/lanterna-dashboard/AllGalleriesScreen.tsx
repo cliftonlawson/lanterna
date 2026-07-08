@@ -1,4 +1,5 @@
-import { ArrowLeft, Eye, Film, HardDrive, ListChecks, PanelLeft, Play, Plus, Search, User, MoreHorizontal } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Archive, ArrowLeft, Eye, Film, HardDrive, ListChecks, PanelLeft, Play, Plus, Search, User, MoreHorizontal, RotateCcw } from 'lucide-react';
 import { LanternLogo } from '../../components/LanternLogo';
 import { statusMeta, type DashboardGallery, type ProjectName, type Theme, type WorkspaceAccount } from './model';
 
@@ -139,6 +140,23 @@ function GalleryCard({
   onOpenGallery: (id: string) => void;
 }) {
   const meta = statusMeta(gallery.status);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+
+    const closeMenu = (event: MouseEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      setMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', closeMenu);
+    return () => document.removeEventListener('mousedown', closeMenu);
+  }, [menuOpen]);
+
+  const archiveLabel = gallery.archived ? 'Restore gallery' : 'Archive gallery';
+  const ArchiveIcon = gallery.archived ? RotateCcw : Archive;
 
   return (
     <article className="gallery-card">
@@ -152,7 +170,33 @@ function GalleryCard({
                 <p><span>{gallery.date}</span><span><Eye size={14} />{gallery.views}</span></p>
         </div>
       </button>
-      <button className="kebab" onClick={() => onArchiveGallery(gallery.id)} aria-label="Archive or restore gallery"><MoreHorizontal size={19} /></button>
+      <div className="gallery-actions" ref={menuRef}>
+        <button
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          aria-label="Gallery actions"
+          className="kebab"
+          onClick={() => setMenuOpen((open) => !open)}
+          type="button"
+        >
+          <MoreHorizontal size={19} />
+        </button>
+        {menuOpen && (
+          <div className="gallery-action-menu" role="menu">
+            <button
+              onClick={() => {
+                onArchiveGallery(gallery.id);
+                setMenuOpen(false);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <ArchiveIcon size={15} />
+              {archiveLabel}
+            </button>
+          </div>
+        )}
+      </div>
     </article>
   );
 }
