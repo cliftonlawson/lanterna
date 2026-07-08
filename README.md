@@ -94,12 +94,13 @@ CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
 CLOUDFLARE_STREAM_API_TOKEN=your-stream-api-token
 EMAIL_PROVIDER=resend
 EMAIL_PROVIDER_API_KEY=your-resend-api-key
+RESEND_READ_API_KEY=your-full-access-resend-api-key
 EMAIL_FROM="Lanterna <deliver@lanterna.video>"
 EMAIL_REPLY_TO=team@hellobower.com
 PUBLIC_DELIVERY_BASE_URL=https://deliver.your-domain.com
 ```
 
-`EMAIL_PROVIDER=mock` keeps delivery email calls as previews while the rest of the delivery proof rows write to Supabase.
+`EMAIL_PROVIDER_API_KEY` should stay send-only in Resend. `RESEND_READ_API_KEY` is a separate server-only full-access key used only for provider-side delivery-status lookups. `EMAIL_PROVIDER=mock` keeps delivery email calls as previews while the rest of the delivery proof rows write to Supabase.
 
 ## Next External Pieces
 

@@ -3,7 +3,7 @@ import { createStreamDirectUpload, createStreamPlayback, createStreamTusUpload, 
 import { publicGalleryAccessError } from './galleryAccess.js';
 import { accountForUser, assertGalleryMembership, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
 import { empty, errorJson, json, readJson, routePath } from './http.js';
-import { sendTransactionalEmail } from './transactionalEmail.js';
+import { buildDeliveryEmailContent, sendTransactionalEmail } from './transactionalEmail.js';
 import { createPaidUnlockCheckout, paidUnlockSession, recoverPaidUnlock, stripeWebhook } from './stripeCheckout.js';
 
 const uploadTargetTypes = new Set(['video', 'photo']);
@@ -18,27 +18,17 @@ function publicBaseUrl(env) {
   return String(env.PUBLIC_DELIVERY_BASE_URL || env.APP_URL || 'http://127.0.0.1:5173').replace(/\/+$/, '');
 }
 
-function escapeHtml(value = '') {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function textToHtml(text = '') {
-  return escapeHtml(text)
-    .split(/\n{2,}/)
-    .map((paragraph) => `<p>${paragraph.replace(/\n/g, '<br>')}</p>`)
-    .join('');
-}
-
 function deliveryLinkForGallery(env, gallery) {
   return `${publicBaseUrl(env)}/g/${encodeURIComponent(gallery.slug)}`;
 }
 
-function deliveryEmailHtml(message, deliveryLink) {
-  return `${textToHtml(message)}<p><a href="${escapeHtml(deliveryLink)}">Open your gallery</a></p>`;
+async function vendorBrandingForAccount(env, accountId) {
+  const rows = await supabaseRest(
+    env,
+    `vendor_branding?select=studio_name,tagline,accent_color&account_id=eq.${encodeURIComponent(accountId)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  return rows?.[0] ?? null;
 }
 
 function streamDirectUploadsEnabled(env) {
@@ -1088,8 +1078,18 @@ async function deliveryRecord(request, env) {
   const deliveryId = crypto.randomUUID();
   const attemptedAt = new Date().toISOString();
   const deliveryLink = deliveryLinkForGallery(env, gallery);
-  const message = String(body.message || '').trim() || 'Your gallery is ready.';
+  const customMessage = String(body.message || '').trim();
+  const message = customMessage || 'Your gallery is ready.';
   const subject = String(body.subject || `${gallery.name} is ready`);
+  const branding = await vendorBrandingForAccount(env, gallery.account_id);
+  const emailContent = buildDeliveryEmailContent({
+    accentColor: branding?.accent_color,
+    deliveryLink,
+    galleryName: gallery.name,
+    message: customMessage,
+    studioName: branding?.studio_name,
+    tagline: branding?.tagline,
+  });
 
   await supabaseRest(env, 'deliveries', {
     method: 'POST',
@@ -1123,9 +1123,9 @@ async function deliveryRecord(request, env) {
   for (const recipient of recipientRows) {
     try {
       const email = await sendTransactionalEmail(env, {
-        html: deliveryEmailHtml(message, deliveryLink),
+        html: emailContent.html,
         subject,
-        text: `${message}\n\nOpen your gallery: ${deliveryLink}`,
+        text: emailContent.text,
         to: recipient.email,
       });
       emails.push(email);
