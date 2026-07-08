@@ -108,6 +108,7 @@ Done when: each table and route has been checked, findings are written into the 
 - Two-clock retention jobs (hot to web at 2 years, web to archive at 10). No customers means no clocks expiring. Revisit at first paying studio. The clocks still get STAMPED at delivery (item 5) so history is correct when the jobs arrive.
 - TV apps. Launch tier is cast/AirPlay-friendly player only, already in the SOP.
 - Cold-tier tuning, extension pricing surface, monetization beyond paid unlocks.
+- Email-safe logo hosting for delivery emails. Current delivery email uses a text brand mark because `vendor_branding.logo_r2_key` is private signed-URL state and old emails would eventually show broken images. Add a stable email-safe logo URL or proxy before inserting studio logos into transactional emails.
 
 ## Queue rules
 
