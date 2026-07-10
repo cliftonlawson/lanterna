@@ -294,9 +294,9 @@
 .search-sort button:hover { background: var(--raise); border-color: var(--border-strong); }
 .count-label { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
 .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(300px,1fr)); gap: 24px; }
-.gallery-card { position: relative; overflow: hidden; background: var(--surface-solid); transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; box-shadow: 0 1px rgba(255,255,255,.025) inset; }
+.gallery-card { position: relative; overflow: visible; background: var(--surface-solid); transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease; box-shadow: 0 1px rgba(255,255,255,.025) inset; }
 .gallery-card:hover { transform: translateY(-4px); border-color: rgba(255,178,77,.3); box-shadow: var(--card-shadow); }
-.gallery-click, .video-card > button:first-child { display: block; width: 100%; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.gallery-click, .video-card > button:first-child { display: block; width: 100%; border: 0; border-radius: inherit; overflow: hidden; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .thumb { position: relative; aspect-ratio: 16 / 10; overflow: hidden; }
 .thumb::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 90% at 30% 20%,rgba(255,220,160,.18),transparent 55%),linear-gradient(180deg,transparent 40%,rgba(8,6,12,.55)); }
 .paid-tile-chip { position: absolute; z-index: 3; top: 11px; left: 11px; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid rgba(255,178,77,.5); border-radius: 8px; background: rgba(8,6,12,.72); color: #FFC98A; backdrop-filter: blur(8px); font-size: 11.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -310,8 +310,12 @@
 .card-body h3 { margin: 0; font-size: 16.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 34px; }
 .card-body p { display: flex; justify-content: space-between; gap: 14px; align-items: center; color: var(--muted); margin: 9px 42px 0 0; font-size: 13px; }
 .card-body span { display: inline-flex; align-items: center; gap: 5px; }
-.kebab { position: absolute; right: 14px; bottom: 16px; width: 34px; height: 34px; border-radius: 10px; border: 0; background: transparent; color: var(--dim); cursor: pointer; transition: background .18s ease, color .18s ease; }
+.gallery-actions { position: absolute; right: 14px; bottom: 16px; z-index: 5; }
+.kebab { width: 34px; height: 34px; border-radius: 10px; border: 0; background: transparent; color: var(--dim); cursor: pointer; transition: background .18s ease, color .18s ease; }
 .kebab:hover { background: var(--hover); color: var(--text2); }
+.gallery-action-menu { position: absolute; right: 0; top: calc(100% + 7px); min-width: 154px; padding: 5px; border: 1px solid var(--border); border-radius: 11px; background: var(--raise); box-shadow: 0 14px 34px rgba(0,0,0,.26); }
+.gallery-action-menu button { display: flex; width: 100%; align-items: center; gap: 8px; min-height: 36px; padding: 8px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--text2); font-size: 12.5px; font-weight: 700; text-align: left; cursor: pointer; }
+.gallery-action-menu button:hover { background: var(--hover); color: var(--text); }
 .studio-empty, .upload-drop { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 70px 24px; border-radius: 22px; border: 1px dashed var(--border-strong); background: radial-gradient(80% 120% at 50% 0%,rgba(255,150,60,.06),transparent 60%); }
 .empty-state { display: flex; min-height: 260px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 38px 24px; border-radius: 18px; border: 1px solid var(--border); background: linear-gradient(180deg,var(--surface-solid),color-mix(in srgb,var(--surface-solid) 70%,transparent)); box-shadow: inset 0 1px rgba(255,255,255,.025); }
 .empty-state svg { flex: 0 0 auto; }
