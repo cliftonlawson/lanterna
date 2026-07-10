@@ -79,6 +79,53 @@ Done when: the happy path and the three failure paths all behave, documented in 
 
 ---
 
+## Active second-audit sequence — dependency order
+
+The item numbers below preserve the audit references; execution follows this dependency order rather than numeric order. No real master uploads should be made until item 14 merges, because the current Stream-only path would create another masterless video.
+
+### 15. Gallery lifecycle ownership
+Reason for this position: lock down destructive gallery and retention state before adding more media paths that depend on gallery ownership.
+Make lifecycle and retention columns server-write-only, block browser-authenticated hard deletes, and replace direct lifecycle writes with explicit server routes. Gallery deletion must be a recoverable soft-delete that atomically enqueues a pending `purge_gallery` outbox task. Archive and restore must remain explicit server-confirmed actions and must not masquerade as physical storage-tier changes.
+Done when: live RLS probes reject direct lifecycle writes and hard deletes, while the legitimate archive/restore and soft-delete server paths work and a delete creates exactly one pending outbox task.
+
+### 16. Signed-download enforcement
+Reason for this position: downloads must be server-enforced before item 14 begins attaching retained R2 masters that the current public payload would otherwise sign even when downloads are disabled.
+Resolve the effective download permission from the video, gallery, and vendor defaults before signing any original R2 URL. Apply the same rule to public gallery payloads and paid-unlock responses; a paid unlock grants viewing, not an override of studio download settings.
+Done when: downloads-off responses contain no signed original URL through either the public or paid-unlock path, while downloads-on responses still receive a short-lived signed URL.
+
+### 16a. Create-gallery persistence gate
+Reason for this position: the gallery row must exist before item 14 starts multipart master ingestion, or the upload path can still fail with `Gallery not found for this account`.
+Wait for a new gallery's server persistence to succeed before navigating into it or enabling uploads, surface a failed save honestly, and preserve globally safe slug handling until item 18b completes the database rule.
+Done when: creating a gallery and immediately starting an upload cannot race the gallery insert, and a failed insert leaves no locally successful phantom gallery.
+
+### 14. Dual Stream-plus-R2 ingestion
+Reason for this position: after lifecycle, download, and creation prerequisites are safe, fix the compounding master-loss problem before any more real media is uploaded.
+Upload the original master once to R2 multipart, verify it server-side, then have Cloudflare Stream ingest from a presigned R2 GET through `/stream/copy`. Upload completion means the verified master is secured; ready means Stream playback has encoded. A Stream failure must retain the master and support a no-reupload retry. Before implementation, prove with one real provider handshake that Stream can ingest the presigned R2 URL while signed playback and allowed origins remain intact; if that proof fails, stop and redesign.
+Existing videos: re-upload the 2.41 GB ceremony through Replace Video after this pipeline lands. Mark disposable test clips as explicit Stream-only legacy and force downloads off. Do not relabel a Stream MP4 derivative as a retained original master.
+Done when: a real upload produces a verified `r2_key` master and a ready Stream asset from the same source upload, failure after R2 completion is retryable without re-upload, and the legacy-video decisions are reflected in persisted state.
+
+### 17. Truthful, idempotent upload accounting
+Reason for this position: generalize accounting only after item 14 defines the final object-completion boundary and provides a real R2 object whose size can be verified.
+At completion, obtain actual object size with R2 `HEAD`, record usage from the verified size rather than client `bytesTotal`, bind upload authorization to the intended object, and make completion idempotent so retries cannot double-count.
+Done when: a raw client cannot under-report bytes, completion records the provider-verified size, and repeated completion requests produce one usage increment.
+
+### 18a. Password-gallery sentinel removal
+Reason for this position: with storage and accounting integrity closed, repair the remaining launch access flow before production-origin review.
+Remove the unusable password placeholder path, hash the studio's real password through the server-owned flow, and ensure no plaintext password is persisted or returned.
+Done when: a newly created password gallery unlocks with the actual password and rejects an incorrect one.
+
+### 18b. Global slug uniqueness
+Reason for this position: public lookup is global, so enforce global uniqueness while there is one studio and no known collision migration to resolve.
+Replace per-account slug uniqueness with a global database constraint and keep slug generation/retry behavior honest under collisions.
+Done when: two accounts cannot persist the same public slug and existing public links still resolve.
+
+### 19. Honest media-task ledger
+Reason for this position: stop writing false completion history after the upload paths are settled, without pretending the deferred worker now exists.
+Stop creating or marking `generate_web_copy` tasks done when no web-copy work occurred. Keep real work pending or stop generating it until a worker exists. Expand item 7b's reconciliation scope to all audited Cloudflare Stream assets without matching video rows, not only the two initially observed orphans.
+Done when: no task is marked done without its work occurring, and the orphan reconciliation decision covers the full provider-versus-database inventory.
+
+---
+
 ## P3 — Verification and hardening
 
 ### 10. Human file-picker tests (already queued in the packet)
