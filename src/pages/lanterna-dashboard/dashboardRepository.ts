@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { clearUploadJobRemote, deleteGalleryMediaRemote, recordGalleryDelivery } from './appApi';
+import { clearUploadJobRemote, deleteGalleryMediaRemote, recordGalleryDelivery, setGalleryArchivedRemote } from './appApi';
 import { parseRecipientEmails, upsertSentRecipients } from './delivery';
 import {
   loadStoredGalleries,
@@ -23,6 +23,21 @@ import {
 } from './schemaMapper';
 
 type SaveReason = 'autosave' | 'create' | 'delivery' | 'archive' | 'upload' | 'video';
+
+const serverOwnedGalleryFields = new Set([
+  'status',
+  'source_file_window_days',
+  'source_file_expires_at',
+  'access_window_days',
+  'access_expires_at',
+  'storage_tier',
+  'is_extended',
+  'extended_until',
+  'published_at',
+  'delivered_at',
+  'archived_at',
+  'deleted_at',
+]);
 
 export type SaveResult = {
   mode: 'local' | 'supabase';
@@ -189,7 +204,7 @@ async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: strin
     cover_photo_id: null,
   };
   const galleryWrite = Object.fromEntries(
-    Object.entries(galleryWithoutDeferredMediaRefs).filter(([key]) => key !== 'status'),
+    Object.entries(galleryWithoutDeferredMediaRefs).filter(([key]) => !serverOwnedGalleryFields.has(key)),
   );
   const designWithoutDeferredMediaRefs = {
     ...bundle.design,
@@ -532,6 +547,13 @@ export async function softDeleteGalleryMedia(
     console.warn('Lanterna media delete stayed local because Supabase soft-delete failed', error);
     return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase media delete failed' };
   }
+}
+
+export async function setGalleryArchived(galleryId: string, archived: boolean): Promise<SaveResult> {
+  if (!isSupabaseConfigured) return { mode: 'local', ok: true };
+
+  await setGalleryArchivedRemote(galleryId, archived);
+  return { mode: 'supabase', ok: true };
 }
 
 export async function saveDashboardGalleries(galleries: DashboardGallery[], reason: SaveReason = 'autosave'): Promise<SaveResult> {
