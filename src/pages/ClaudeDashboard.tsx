@@ -4,12 +4,15 @@ import { AllGalleriesScreen } from './lanterna-dashboard/AllGalleriesScreen';
 import {
   completeBackgroundUpload,
   completeUpload,
+  completeVideoMasterUpload,
   createBackgroundUploadSlot,
   createGalleryRemote,
   createUploadSlot,
-  postFileToStream,
+  pauseVideoMasterUpload,
   processUploadedVideos,
   putFileToR2,
+  startVideoPlaybackPreparation,
+  uploadVideoMasterMultipart,
 } from './lanterna-dashboard/appApi';
 import { AppShell } from './lanterna-dashboard/AppShell';
 import {
@@ -72,6 +75,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const gallerySaveQueueRef = useRef(Promise.resolve());
   const createGalleryRequestRef = useRef(false);
+  const uploadAbortControllersRef = useRef(new Map<string, AbortController>());
 
   const activeGallery = galleries.find((gallery) => gallery.id === activeId) ?? galleries[0];
 
@@ -98,7 +102,13 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
   const activeGalleryId = activeGallery?.id ?? '';
   const processingVideoIds = activeGallery?.videoItems
-    .filter(videoNeedsProcessingRefresh)
+    .filter((video) => videoNeedsProcessingRefresh(video) && !uploadJobs.some((job) => (
+      job.galleryId === activeGalleryId
+      && job.targetId === video.id
+      && job.uploadPhase
+      && job.uploadPhase !== 'preparing_playback'
+      && job.uploadPhase !== 'ready'
+    )))
     .map((video) => video.id)
     .join('|') ?? '';
   const processingUploadJobIds = uploadJobs
@@ -108,7 +118,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     .join('|');
 
   useEffect(() => {
-    if (view !== 'upload' || !activeGalleryId || (!processingVideoIds && !processingUploadJobIds)) return undefined;
+    if (!activeGalleryId || (!processingVideoIds && !processingUploadJobIds)) return undefined;
 
     let cancelled = false;
     let inFlight = false;
@@ -168,7 +178,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeGalleryId, processingUploadJobIds, processingVideoIds, view]);
+  }, [activeGalleryId, processingUploadJobIds, processingVideoIds]);
 
   const commitGalleries = (
     updater: (current: DashboardGallery[]) => DashboardGallery[],
@@ -187,6 +197,14 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   const showToast = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(''), 2200);
+  };
+
+  const patchUploadJob = (jobId: string, patch: Partial<UploadJob>) => {
+    setUploadJobs((current) => {
+      const next = current.map((job) => job.id === jobId ? { ...job, ...patch } : job);
+      void saveUploadJobs(next);
+      return next;
+    });
   };
 
   const updateWorkspace = (patch: Partial<typeof workspace>) => {
@@ -210,6 +228,15 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   const openVideoDetail = (videoId: string) => {
     setDetailVideoId(videoId);
     setDetailOpen(true);
+  };
+
+  const refreshUploadState = async () => {
+    const [refreshedGalleries, refreshedJobs] = await Promise.all([
+      loadDashboardGalleries(),
+      loadUploadJobs(),
+    ]);
+    setGalleries(refreshedGalleries);
+    setUploadJobs(refreshedJobs);
   };
 
   const archiveGallery = async (id: string) => {
@@ -430,6 +457,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       bytesTotal: file.size,
       bytesUploaded: 0,
       createdAt: new Date().toISOString(),
+      uploadPhase: targetType === 'video' ? 'uploading_master' : undefined,
     }));
 
     const nextGalleries = galleries.map((gallery) => gallery.id === activeGallery.id ? {
@@ -462,7 +490,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
       let jobId = localJob.id;
       try {
-        setJob(jobId, { status: 'uploading' }, false);
+        setJob(jobId, { status: 'pending' }, false);
         const slot = await createUploadSlot({
           bytesTotal: file.size,
           contentType: file.type || 'application/octet-stream',
@@ -474,53 +502,196 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         nextJobs = nextJobs.map((job) => job.id === jobId ? { ...job, id: slot.uploadJobId } : job);
         jobId = slot.uploadJobId;
         setUploadJobs(nextJobs);
+        setJob(jobId, {
+          status: 'uploading',
+          uploadPhase: targetType === 'video' ? 'uploading_master' : undefined,
+        });
 
-        let streamUpload = targetType === 'video' && slot.stream?.url ? slot.stream : null;
-        let uploadedR2Key: string | null = null;
-        if (streamUpload) {
+        if (targetType === 'video') {
+          if (slot.r2.method !== 'MULTIPART') throw new Error('Video upload did not return an R2 multipart session.');
+          const controller = new AbortController();
+          uploadAbortControllersRef.current.set(jobId, controller);
+
+          await uploadVideoMasterMultipart(
+            file,
+            { galleryId: activeGallery.id, r2: slot.r2, uploadJobId: slot.uploadJobId },
+            (bytesUploaded) => setJob(jobId, {
+              bytesUploaded,
+              status: 'uploading',
+              uploadPhase: 'uploading_master',
+            }),
+            controller.signal,
+          );
+          const master = await completeVideoMasterUpload(activeGallery.id, slot.uploadJobId);
+          uploadAbortControllersRef.current.delete(jobId);
+          setJob(jobId, {
+            bytesUploaded: master.verifiedBytes,
+            errorCode: undefined,
+            errorMessage: undefined,
+            status: 'processing',
+            uploadPhase: 'master_secured',
+          });
+          setGalleries((current) => current.map((gallery) => gallery.id === activeGallery.id
+            ? updateUploadedMedia(gallery, target.id, 'video', master.r2Key, master.verifiedBytes, null, false)
+            : gallery));
+          showToast('Master secured; preparing playback');
+
           try {
-            await postFileToStream(file, streamUpload, (bytesUploaded) => setJob(jobId, { bytesUploaded, status: 'uploading' }));
-          } catch {
-            streamUpload = null;
-            await putFileToR2(file, slot.r2, (bytesUploaded) => setJob(jobId, { bytesUploaded, status: 'uploading' }));
-            uploadedR2Key = slot.r2.key;
+            const playback = await startVideoPlaybackPreparation(activeGallery.id, slot.uploadJobId);
+            setJob(jobId, { status: 'processing', uploadPhase: playback.uploadPhase });
+            setGalleries((current) => current.map((gallery) => gallery.id === activeGallery.id
+              ? updateUploadedMedia(gallery, target.id, 'video', master.r2Key, master.verifiedBytes, playback.streamUid, false)
+              : gallery));
+          } catch (error) {
+            const [refreshedGalleries, refreshedJobs] = await Promise.all([
+              loadDashboardGalleries(),
+              loadUploadJobs(),
+            ]);
+            const refreshedById = new Map(refreshedJobs.map((job) => [job.id, job]));
+            nextJobs = nextJobs.map((job) => refreshedById.get(job.id) ?? job);
+            setGalleries(refreshedGalleries);
+            setUploadJobs(nextJobs);
+            showToast(error instanceof Error ? error.message : 'Master secured; playback preparation needs a retry');
           }
-        } else {
-          await putFileToR2(file, slot.r2, (bytesUploaded) => setJob(jobId, { bytesUploaded, status: 'uploading' }));
-          uploadedR2Key = slot.r2.key;
+          continue;
         }
+
+        if (slot.r2.method !== 'PUT') throw new Error('Photo upload did not return an R2 upload URL.');
+        await putFileToR2(file, slot.r2, (bytesUploaded) => setJob(jobId, { bytesUploaded, status: 'uploading' }));
         await completeUpload({
           bytes: file.size,
           galleryId: activeGallery.id,
-          r2Key: uploadedR2Key,
-          streamUid: streamUpload ? slot.stream?.streamUploadId ?? null : null,
+          r2Key: slot.r2.key,
           targetId: target.id,
-          targetType,
+          targetType: 'photo',
           uploadJobId: slot.uploadJobId,
         });
-        const autoReady = targetType === 'video' && Boolean(uploadedR2Key) && !streamUpload;
-        if (autoReady) await processUploadedVideos(activeGallery.id, target.id);
-
-        setJob(jobId, { bytesUploaded: file.size, status: targetType === 'photo' || autoReady ? 'complete' : 'processing' });
+        setJob(jobId, { bytesUploaded: file.size, status: 'complete' });
         setGalleries((current) => {
-          const updated = current.map((gallery) => gallery.id === activeGallery.id ? updateUploadedMedia(gallery, target.id, targetType, uploadedR2Key, file.size, streamUpload ? slot.stream?.streamUploadId ?? null : null, autoReady) : gallery);
+          const updated = current.map((gallery) => gallery.id === activeGallery.id
+            ? updateUploadedMedia(gallery, target.id, 'photo', slot.r2.key, file.size)
+            : gallery);
           void saveDashboardGalleries(updated, 'upload');
           return updated;
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Upload failed';
-        setJob(jobId, { errorMessage: message, status: 'errored' });
-        setGalleries((current) => {
-          const updated = current.map((gallery) => gallery.id === activeGallery.id ? removePendingMediaFromGallery(gallery, target.id, targetType) : gallery);
-          void saveDashboardGalleries(updated, 'upload');
-          return updated;
+        const paused = error instanceof DOMException && error.name === 'AbortError';
+        uploadAbortControllersRef.current.delete(jobId);
+        setJob(jobId, {
+          errorMessage: paused ? undefined : message,
+          status: paused ? 'paused' : 'errored',
+          uploadPhase: targetType === 'video' ? 'uploading_master' : undefined,
         });
+        if (targetType === 'photo') {
+          setGalleries((current) => {
+            const updated = current.map((gallery) => gallery.id === activeGallery.id ? removePendingMediaFromGallery(gallery, target.id, targetType) : gallery);
+            void saveDashboardGalleries(updated, 'upload');
+            return updated;
+          });
+        }
         showToast(message);
       }
     }
 
-    const nextAllowanceUsedGb = Number((workspace.allowanceUsedGb + uploadBytes / 1024 / 1024 / 1024).toFixed(2));
-    updateWorkspace({ allowanceUsedGb: nextAllowanceUsedGb });
+    const refreshedWorkspace = await loadWorkspaceAccount();
+    setWorkspace(refreshedWorkspace);
+  };
+
+  const resumeVideoMasterUpload = async (jobId: string, file: File) => {
+    const job = uploadJobs.find((item) => item.id === jobId);
+    const gallery = galleries.find((item) => item.id === job?.galleryId);
+    if (!job || !gallery || job.targetType !== 'video' || !job.targetId) return;
+    if (file.name !== job.fileName || file.size !== job.bytesTotal) {
+      showToast('Choose the same video file to resume this upload');
+      return;
+    }
+
+    try {
+      patchUploadJob(job.id, {
+        errorCode: undefined,
+        errorMessage: undefined,
+        status: 'uploading',
+        uploadPhase: 'uploading_master',
+      });
+      const slot = await createUploadSlot({
+        bytesTotal: file.size,
+        contentType: file.type || 'application/octet-stream',
+        fileName: file.name,
+        galleryId: gallery.id,
+        resumeUploadJobId: job.id,
+        targetId: job.targetId,
+        targetType: 'video',
+      });
+      if (slot.r2.method !== 'MULTIPART') throw new Error('Video resume did not return an R2 multipart session.');
+
+      const controller = new AbortController();
+      uploadAbortControllersRef.current.set(job.id, controller);
+      await uploadVideoMasterMultipart(
+        file,
+        { galleryId: gallery.id, r2: slot.r2, uploadJobId: job.id },
+        (bytesUploaded) => patchUploadJob(job.id, { bytesUploaded, status: 'uploading', uploadPhase: 'uploading_master' }),
+        controller.signal,
+      );
+
+      const master = await completeVideoMasterUpload(gallery.id, job.id);
+      uploadAbortControllersRef.current.delete(job.id);
+      patchUploadJob(job.id, {
+        bytesUploaded: master.verifiedBytes,
+        status: 'processing',
+        uploadPhase: 'master_secured',
+      });
+      setGalleries((current) => current.map((item) => item.id === gallery.id
+        ? updateUploadedMedia(item, job.targetId!, 'video', master.r2Key, master.verifiedBytes, null, false)
+        : item));
+
+      const playback = await startVideoPlaybackPreparation(gallery.id, job.id);
+      patchUploadJob(job.id, { status: 'processing', uploadPhase: playback.uploadPhase });
+      setGalleries((current) => current.map((item) => item.id === gallery.id
+        ? updateUploadedMedia(item, job.targetId!, 'video', master.r2Key, master.verifiedBytes, playback.streamUid, false)
+        : item));
+      setWorkspace(await loadWorkspaceAccount());
+      showToast('Master secured; preparing playback');
+    } catch (error) {
+      const paused = error instanceof DOMException && error.name === 'AbortError';
+      uploadAbortControllersRef.current.delete(job.id);
+      if (paused) {
+        patchUploadJob(job.id, { status: 'paused', uploadPhase: 'uploading_master' });
+        return;
+      }
+      const [refreshedGalleries, refreshedJobs] = await Promise.all([
+        loadDashboardGalleries(),
+        loadUploadJobs(),
+      ]);
+      setGalleries(refreshedGalleries);
+      setUploadJobs(refreshedJobs);
+      showToast(error instanceof Error ? error.message : 'Upload resume failed');
+    }
+  };
+
+  const retryVideoPlayback = async (jobId: string) => {
+    const job = uploadJobs.find((item) => item.id === jobId);
+    if (!job || job.targetType !== 'video') return;
+
+    try {
+      patchUploadJob(job.id, {
+        errorCode: undefined,
+        errorMessage: undefined,
+        status: 'processing',
+        uploadPhase: 'starting_playback',
+      });
+      const playback = await startVideoPlaybackPreparation(job.galleryId, job.id);
+      patchUploadJob(job.id, { status: 'processing', uploadPhase: playback.uploadPhase });
+      showToast('Preparing playback from the secured master');
+    } catch (error) {
+      const [refreshedGalleries, refreshedJobs] = await Promise.all([
+        loadDashboardGalleries(),
+        loadUploadJobs(),
+      ]);
+      setGalleries(refreshedGalleries);
+      setUploadJobs(refreshedJobs);
+      showToast(error instanceof Error ? error.message : 'Playback retry failed');
+    }
   };
 
   const uploadBackgroundImage = async (file: File) => {
@@ -570,14 +741,19 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   };
 
   const toggleUploadJob = (jobId: string) => {
-    setUploadJobs((current) => {
-      const next = current.map((job) => job.id === jobId ? {
-        ...job,
-        status: job.status === 'paused' ? 'uploading' as const : 'paused' as const,
-      } : job);
-      void saveUploadJobs(next);
-      return next;
-    });
+    const job = uploadJobs.find((item) => item.id === jobId);
+    if (!job) return;
+
+    if (job.targetType === 'video' && job.uploadPhase === 'uploading_master') {
+      uploadAbortControllersRef.current.get(jobId)?.abort();
+      patchUploadJob(jobId, { status: 'paused' });
+      void pauseVideoMasterUpload(job.galleryId, job.id).catch((error) => {
+        showToast(error instanceof Error ? error.message : 'Could not pause upload');
+      });
+      return;
+    }
+
+    patchUploadJob(jobId, { status: job.status === 'paused' ? 'uploading' : 'paused' });
   };
 
   const removeUploadJob = (jobId: string) => {
@@ -657,6 +833,8 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
             openVideoDetail(videoId);
           }}
           onRemoveUploadJob={removeUploadJob}
+          onResumeVideoUpload={(jobId, file) => void resumeVideoMasterUpload(jobId, file)}
+          onRetryVideoPlayback={(jobId) => void retryVideoPlayback(jobId)}
           onToggleUploadJob={toggleUploadJob}
         />
       )}
@@ -684,6 +862,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           onGalleryChange={updateActiveGallery}
           onClose={() => setDetailOpen(false)}
           onShowToast={showToast}
+          onUploadStateChange={refreshUploadState}
         />
       )}
       {toast && <div className="toast">{toast}</div>}
@@ -707,7 +886,8 @@ function videoNeedsProcessingRefresh(video: MediaVideo) {
 function galleryVideoJobNeedsProcessing(job: UploadJob, galleryId: string) {
   return job.galleryId === galleryId
     && job.targetType === 'video'
-    && job.status === 'processing';
+    && job.status === 'processing'
+    && (!job.uploadPhase || job.uploadPhase === 'preparing_playback');
 }
 
 function removePendingMediaFromGallery(gallery: DashboardGallery, targetId: string | null, targetType: 'video' | 'photo') {

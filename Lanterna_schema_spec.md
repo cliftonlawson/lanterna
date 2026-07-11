@@ -339,13 +339,29 @@ upload_jobs
   bytes_total         bigint
   bytes_uploaded      bigint default 0
   multipart_upload_id text null              -- R2 multipart session
-  stream_upload_id    text null              -- Stream Direct Creator / TUS session
+  multipart_part_size bigint null             -- fixed R2 part size for resume validation
+  r2_key              text null               -- server-issued master key
+  content_type        text null
+  file_name           text null
+  upload_phase        text null               -- uploading_master | master_secured | starting_playback | preparing_playback | copy_failed | ready
+  is_replacement      boolean default false   -- derived server-side from existing video assets
+  verified_bytes      bigint null             -- R2 HEAD result, never client-reported
+  master_verified_at  timestamptz null
+  stream_upload_id    text null               -- Stream UID created by /stream/copy
+  stream_source_expires_at timestamptz null   -- expiry of the R2 GET handed to Stream
+  stream_copy_started_at timestamptz null
+  copy_attempts       int default 0
+  error_code          text null
+  error_message       text null
+  completed_at        timestamptz null
   created_at          timestamptz default now()
   updated_at          timestamptz default now()
   index (account_id, status)
 ```
 
-Completion is server-authoritative: a client claiming "done" is not done until the backend verifies the object and (for video) Stream processing succeeds. Errored jobs must release any reserved Stream minutes so they do not count against quota.
+Video ingestion is R2-first. The browser uploads the master once through the server-issued multipart session. The server completes the multipart upload, verifies actual bytes and content type with R2 `HEAD`, attaches the master and records allowance usage exactly once, then gives Stream a time-limited R2 GET through `/stream/copy`. `master_secured` means the retained original is safe; only `ready` means Stream playback is encoded. Copy or encode failure moves the job to `copy_failed` while retaining the verified master for a no-reupload retry. Replacement status is derived server-side, and the existing video row is not swapped until the replacement Stream copy is ready.
+
+Completion is server-authoritative: a client claiming "done" is not done until the backend verifies the object and (for video) Stream processing succeeds. Errored pre-master jobs release their reservation after the stale-job timeout. A copy failure retains the already-consumed upload allowance because the verified master exists in R2.
 
 ### 7a. Media tasks (durable outbox for two-system operations)
 

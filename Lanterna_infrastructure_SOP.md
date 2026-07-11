@@ -76,11 +76,12 @@ This is the riskiest path because the files are huge and the network is not reli
 
 ### Films
 
-1. Client requests an upload slot. A Worker creates the film record (status `uploading`) and returns either a Stream Direct Creator Upload URL (TUS-based) or, for the R2 master, a multipart upload session with presigned part URLs.
-2. The browser uploads directly to Cloudflare, not through your server. Use TUS / multipart so the transfer is resumable. A dropped connection resumes from the last completed part rather than restarting the multi-GB file. This is what makes the UI's pause/resume real, and what the README's "auto-resume on disconnect" depends on.
-3. On completion, the upload target fires a notification (Stream webhook or your own "complete multipart" call) that enqueues a processing job.
-4. Processing: Stream transcodes to the adaptive ladder (free), a poster/still is generated, the master is confirmed in R2, and the film record flips `processing → done`. Only now is the film clickable in the gallery.
-5. If encoding errors, mark the film `errored`, release any reserved Stream storage, and surface a retry. Do not leave half-processed films that count against quota.
+1. Client requests an upload slot after the gallery and placeholder film row are confirmed in Supabase. The server derives whether this is a replacement from the existing video assets, creates an R2 multipart session, and stores the opaque master key, fixed part size, and upload phase on a server-owned `upload_jobs` row.
+2. The browser uploads the original once, directly to R2, using just-in-time presigned part URLs. Parts upload with limited parallelism and individual retries. Resume asks R2 which parts already landed and skips them; a dropped connection does not restart the multi-GB file.
+3. The server completes the multipart upload only after every expected part and size is present. It then performs R2 `HEAD`, requires the provider-reported byte size and content type to match the slot, writes `r2_key` and verified bytes server-side, and records one idempotent usage event keyed to the upload job. This is the `master_secured` boundary.
+4. The server creates a generously-lived, configurable presigned R2 GET (24 hours by default) and submits it to Cloudflare Stream `/copy` with signed playback and allowed origins required. The browser does not upload the file a second time and does not wait synchronously for encoding.
+5. Polling confirms Stream readiness. Only then does the film flip to `ready`. For Replace Video, the old master and playback remain visible until this point; the ready transition atomically swaps the row and enqueues cleanup for the old assets.
+6. If Stream copy or encoding fails, keep the verified R2 master, set the explicit `copy_failed` state, and offer a no-reupload retry that mints a fresh source URL. Failed Stream assets are deleted immediately when possible and also recorded in the cleanup outbox. Pre-master abandoned multipart jobs expire through the stale-job sweep.
 
 ### Photos
 
@@ -204,7 +205,7 @@ Pull the delivery-minutes and operations breakdown by gallery. Identify the asse
 
 - Buckets, Stream, DB, queues provisioned per environment via IaC, prod isolated.
 - All client media access goes through a Worker with signed URLs; no public bucket exposure.
-- Multipart/TUS resumable uploads working browser-to-Cloudflare, with server-authoritative completion.
+- R2 multipart resumable master uploads working browser-to-Cloudflare, with server-authoritative HEAD verification and Stream `/copy` readiness.
 - Password galleries hash passwords; unset password blocks publish.
 - Allow-download and watermark toggles honored per gallery in the actual delivery path.
 - Storage metering feeds the vendor quota UI, near-cap warning, and over-cap block.

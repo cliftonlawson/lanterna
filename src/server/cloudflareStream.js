@@ -1,8 +1,10 @@
 import { requireEnv } from './http.js';
 
 const STREAM_SIGNING_TTL_SECONDS = 3600;
+const DEFAULT_STREAM_COPY_SOURCE_TTL_SECONDS = 24 * 60 * 60;
+const MAX_STREAM_COPY_SOURCE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-function streamAllowedOrigins(env) {
+export function streamAllowedOrigins(env) {
   return String(env.CLOUDFLARE_STREAM_ALLOWED_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
@@ -14,6 +16,12 @@ function streamAllowedOrigins(env) {
         return origin;
       }
     });
+}
+
+export function streamCopySourceTtlSeconds(env) {
+  const configured = Number(env.STREAM_COPY_SOURCE_TTL_SECONDS || DEFAULT_STREAM_COPY_SOURCE_TTL_SECONDS);
+  if (!Number.isFinite(configured) || configured <= 0) return DEFAULT_STREAM_COPY_SOURCE_TTL_SECONDS;
+  return Math.min(Math.max(Math.round(configured), 60 * 60), MAX_STREAM_COPY_SOURCE_TTL_SECONDS);
 }
 
 async function readProviderPayload(response) {
@@ -102,10 +110,11 @@ export async function createStreamPlayback(env, streamUid, options = {}) {
   };
 }
 
-export async function createStreamDirectUpload(env, input = {}, fetchImpl = fetch) {
+export async function createStreamCopy(env, input = {}, fetchImpl = fetch) {
   requireEnv(env, ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_STREAM_API_TOKEN']);
+  if (!input.sourceUrl) throw new Error('Stream copy source URL is required.');
 
-  const response = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/stream/direct_upload`, {
+  const response = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/stream/copy`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${env.CLOUDFLARE_STREAM_API_TOKEN}`,
@@ -113,73 +122,35 @@ export async function createStreamDirectUpload(env, input = {}, fetchImpl = fetc
     },
     body: JSON.stringify({
       ...(streamAllowedOrigins(env).length > 0 ? { allowedOrigins: streamAllowedOrigins(env) } : {}),
-      expiry: new Date(Date.now() + Number(env.STREAM_UPLOAD_URL_TTL_SECONDS || 3600) * 1000).toISOString(),
-      maxDurationSeconds: Number(env.STREAM_MAX_DURATION_SECONDS || 14400),
+      input: input.sourceUrl,
       meta: {
         accountId: input.accountId,
         galleryId: input.galleryId,
-        targetId: input.targetId,
+        name: input.fileName,
+        uploadJobId: input.uploadJobId,
+        videoId: input.videoId,
       },
+      name: input.fileName,
       requireSignedURLs: true,
     }),
   });
 
   const payload = await readProviderPayload(response);
-  return {
-    expiresAt: payload.result?.expiry,
-    provider: 'cloudflare-stream',
-    protocol: 'post',
-    streamUploadId: payload.result?.uid,
-    url: payload.result?.uploadURL,
-  };
+  if (!payload.result?.uid) throw new Error('Cloudflare Stream copy did not return a video uid.');
+  return payload.result;
 }
 
-function streamUploadMetadata(input = {}, env = {}) {
-  const expiresAt = new Date(Date.now() + Number(env.STREAM_UPLOAD_URL_TTL_SECONDS || 3600) * 1000).toISOString();
-  const metadata = {
-    accountId: input.accountId,
-    expiry: expiresAt,
-    galleryId: input.galleryId,
-    maxDurationSeconds: String(Number(env.STREAM_MAX_DURATION_SECONDS || 14400)),
-    name: input.fileName,
-    targetId: input.targetId,
-  };
-
-  const entries = Object.entries(metadata)
-    .filter(([, value]) => value != null && String(value).trim())
-    .map(([key, value]) => `${key} ${btoa(String(value))}`);
-
-  const origins = streamAllowedOrigins(env);
-  if (origins.length) entries.push(`allowedorigins ${btoa(origins.join(','))}`);
-  entries.push('requiresignedurls');
-  return entries.join(',');
-}
-
-export async function createStreamTusUpload(env, input = {}, fetchImpl = fetch) {
+export async function deleteStreamVideo(env, streamUid, fetchImpl = fetch) {
   requireEnv(env, ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_STREAM_API_TOKEN']);
+  if (!streamUid) return false;
 
-  const response = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/stream?direct_user=true`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${env.CLOUDFLARE_STREAM_API_TOKEN}`,
-      'tus-resumable': '1.0.0',
-      'upload-length': String(input.bytesTotal || 0),
-      'upload-metadata': streamUploadMetadata(input, env),
-    },
+  const response = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/stream/${encodeURIComponent(streamUid)}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${env.CLOUDFLARE_STREAM_API_TOKEN}` },
   });
-
+  if (response.status === 404) return false;
   if (!response.ok) await readProviderPayload(response);
-
-  const streamUploadId = response.headers.get('stream-media-id');
-  const url = response.headers.get('location');
-  if (!streamUploadId || !url) throw new Error('Cloudflare Stream tus upload URL is missing.');
-
-  return {
-    provider: 'cloudflare-stream',
-    protocol: 'tus',
-    streamUploadId,
-    url,
-  };
+  return true;
 }
 
 export async function getStreamVideo(env, streamUid, fetchImpl = fetch) {

@@ -89,26 +89,34 @@ type CreateUploadSlotInput = {
   contentType: string;
   fileName: string;
   galleryId: string;
+  resumeUploadJobId?: string;
   targetId: string;
   targetType: UploadTargetType;
 };
 
+type R2PutSlot = {
+  headers: Record<string, string>;
+  key: string;
+  method: 'PUT';
+  url: string;
+};
+
+export type R2MultipartSlot = {
+  key: string;
+  method: 'MULTIPART';
+  partSize: number;
+  provider: 'r2';
+};
+
 type UploadSlotResponse = {
   galleryId: string;
-  r2: {
-    headers: Record<string, string>;
-    key: string;
-    method: 'PUT';
-    url: string;
-  };
-  stream: null | {
-    protocol?: 'post' | 'tus';
-    streamUploadId?: string;
-    url?: string;
-  };
+  r2: R2PutSlot | R2MultipartSlot;
+  resumed?: boolean;
+  stream: null;
   targetId: string;
   targetType: UploadTargetType;
   uploadJobId: string;
+  uploadPhase?: VideoUploadPhase;
 };
 
 export async function createUploadSlot(input: CreateUploadSlotInput) {
@@ -119,6 +127,7 @@ export async function createUploadSlot(input: CreateUploadSlotInput) {
     contentType: input.contentType,
     fileName: input.fileName,
     galleryId: input.galleryId,
+    resumeUploadJobId: input.resumeUploadJobId,
     targetId,
     targetType: input.targetType,
   });
@@ -127,27 +136,83 @@ export async function createUploadSlot(input: CreateUploadSlotInput) {
 type CompleteUploadInput = {
   bytes: number;
   galleryId: string;
-  r2Key?: string | null;
-  stageReplacement?: boolean;
-  streamUid?: string | null;
+  r2Key: string;
   targetId: string;
-  targetType: UploadTargetType;
+  targetType: 'photo';
   uploadJobId: string;
 };
 
 export async function completeUpload(input: CompleteUploadInput) {
-  const targetId = input.targetType === 'video' ? videoDatabaseId(input.targetId) : photoDatabaseId(input.targetId);
+  const targetId = photoDatabaseId(input.targetId);
 
   return postApi<{ ok: boolean }>('/api/upload/complete', {
     bytes: input.bytes,
     galleryId: input.galleryId,
     r2Key: input.r2Key,
-    stageReplacement: input.stageReplacement,
-    streamUid: input.streamUid,
     targetId,
     targetType: input.targetType,
     uploadJobId: input.uploadJobId,
   });
+}
+
+export type VideoUploadPhase = 'uploading_master' | 'master_secured' | 'starting_playback' | 'preparing_playback' | 'copy_failed' | 'ready';
+
+type MultipartStatusResponse = {
+  bytesUploaded: number;
+  objectComplete: boolean;
+  ok: boolean;
+  parts: Array<{ partNumber: number; size: number }>;
+  uploadJobId: string;
+  uploadPhase: VideoUploadPhase;
+};
+
+export async function getVideoMultipartStatus(galleryId: string, uploadJobId: string) {
+  return postApi<MultipartStatusResponse>('/api/upload/video/status', { galleryId, uploadJobId });
+}
+
+export async function pauseVideoMasterUpload(galleryId: string, uploadJobId: string) {
+  return postApi<{ ok: boolean; uploadJobId: string; uploadPhase: 'uploading_master' }>('/api/upload/video/pause', {
+    galleryId,
+    uploadJobId,
+  });
+}
+
+export async function createVideoUploadPartUrl(galleryId: string, uploadJobId: string, partNumber: number) {
+  return postApi<{
+    ok: boolean;
+    part: {
+      expiresAt: string;
+      headers: Record<string, string>;
+      method: 'PUT';
+      partNumber: number;
+      url: string;
+    };
+    uploadJobId: string;
+  }>('/api/upload/video/part', { galleryId, partNumber, uploadJobId });
+}
+
+export async function completeVideoMasterUpload(galleryId: string, uploadJobId: string) {
+  return postApi<{
+    alreadyCompleted: boolean;
+    isReplacement: boolean;
+    ok: boolean;
+    r2Key: string;
+    uploadJobId: string;
+    uploadPhase: 'master_secured';
+    usageRecorded: boolean;
+    verifiedBytes: number;
+  }>('/api/upload/video/complete-master', { galleryId, uploadJobId });
+}
+
+export async function startVideoPlaybackPreparation(galleryId: string, uploadJobId: string) {
+  return postApi<{
+    alreadyStarted?: boolean;
+    ok: boolean;
+    sourceExpiresAt?: string;
+    streamUid: string;
+    uploadJobId: string;
+    uploadPhase: 'preparing_playback' | 'ready';
+  }>('/api/upload/video/start-playback', { galleryId, uploadJobId });
 }
 
 export async function processUploadedVideos(galleryId: string, videoId?: string) {
@@ -187,7 +252,7 @@ export async function deleteGalleryMediaRemote(input: {
 
 type BackgroundSlotResponse = {
   galleryId: string;
-  r2: UploadSlotResponse['r2'];
+  r2: R2PutSlot;
 };
 
 export async function createBackgroundUploadSlot(input: {
@@ -420,7 +485,7 @@ export async function recoverPaidUnlock(slug: string, videoId: string, email: st
 
 export function putFileToR2(
   file: File,
-  r2: UploadSlotResponse['r2'],
+  r2: R2PutSlot,
   onProgress: (bytesUploaded: number) => void,
 ) {
   return new Promise<void>((resolve, reject) => {
@@ -447,101 +512,142 @@ export function putFileToR2(
   });
 }
 
-export function postFileToStream(
+const VIDEO_MULTIPART_CONCURRENCY = 3;
+const VIDEO_PART_RETRY_DELAYS = [0, 1000, 3000, 5000];
+
+export async function uploadVideoMasterMultipart(
   file: File,
-  stream: NonNullable<UploadSlotResponse['stream']>,
+  input: {
+    galleryId: string;
+    r2: R2MultipartSlot;
+    uploadJobId: string;
+  },
   onProgress: (bytesUploaded: number) => void,
+  signal?: AbortSignal,
 ) {
-  if (!stream.url) throw new Error('Cloudflare Stream upload URL is missing.');
-  if (stream.protocol === 'tus') return uploadFileToStreamTus(file, stream.url, onProgress);
+  const status = await getVideoMultipartStatus(input.galleryId, input.uploadJobId);
+  if (status.objectComplete || status.uploadPhase !== 'uploading_master') {
+    onProgress(status.bytesUploaded);
+    return;
+  }
 
-  const uploadUrl = stream.url;
+  const partCount = Math.ceil(file.size / input.r2.partSize);
+  const completedParts = new Map(status.parts.map((part) => [part.partNumber, part.size]));
+  const progressByPart = new Map(completedParts);
+  const missingParts: number[] = [];
 
-  onProgress(Math.max(1, Math.round(file.size * 0.02)));
+  for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
+    const start = (partNumber - 1) * input.r2.partSize;
+    const expectedSize = Math.min(input.r2.partSize, file.size - start);
+    if (completedParts.get(partNumber) === expectedSize) continue;
+    missingParts.push(partNumber);
+  }
 
-  const body = new FormData();
-  body.set('file', file, file.name);
+  const reportProgress = () => {
+    const uploaded = [...progressByPart.values()].reduce((sum, bytes) => sum + bytes, 0);
+    onProgress(Math.min(uploaded, file.size));
+  };
+  reportProgress();
 
-  return fetch(uploadUrl, {
-    body,
-    method: 'POST',
-  }).then(async (response) => {
-    if (!response.ok) {
-      const details = await response.text().catch(() => '');
-      throw new Error(`Cloudflare Stream upload failed (${response.status})${details ? `: ${details.slice(0, 220)}` : ''}`);
+  let queueIndex = 0;
+  const worker = async () => {
+    while (queueIndex < missingParts.length) {
+      if (signal?.aborted) throw new DOMException('Upload paused.', 'AbortError');
+      const partNumber = missingParts[queueIndex];
+      queueIndex += 1;
+      const start = (partNumber - 1) * input.r2.partSize;
+      const end = Math.min(start + input.r2.partSize, file.size);
+      const part = file.slice(start, end);
+
+      await uploadVideoPartWithRetry({
+        blob: part,
+        galleryId: input.galleryId,
+        onProgress: (bytes) => {
+          progressByPart.set(partNumber, bytes);
+          reportProgress();
+        },
+        partNumber,
+        signal,
+        uploadJobId: input.uploadJobId,
+      });
+      progressByPart.set(partNumber, part.size);
+      reportProgress();
     }
-    onProgress(file.size);
-  }).catch((error) => {
-    if (error instanceof Error && error.message.startsWith('Cloudflare Stream upload failed')) throw error;
-    throw new Error('Cloudflare Stream upload failed. Falling back to R2 original upload.');
-  });
-}
-
-function uploadFileToStreamTus(
-  file: File,
-  uploadUrl: string,
-  onProgress: (bytesUploaded: number) => void,
-) {
-  const chunkSize = 50 * 1024 * 1024;
-  const retryDelays = [0, 1000, 3000, 5000];
-
-  const uploadChunk = (offset: number, attempt = 0): Promise<void> => {
-    if (offset >= file.size) {
-      onProgress(file.size);
-      return Promise.resolve();
-    }
-
-    const end = Math.min(offset + chunkSize, file.size);
-    const chunk = file.slice(offset, end);
-
-    return new Promise<void>((resolve, reject) => {
-      const request = new XMLHttpRequest();
-      request.open('PATCH', uploadUrl);
-      request.setRequestHeader('content-type', 'application/offset+octet-stream');
-      request.setRequestHeader('tus-resumable', '1.0.0');
-      request.setRequestHeader('upload-offset', String(offset));
-
-      request.upload.onprogress = (event) => {
-        if (event.lengthComputable) onProgress(offset + event.loaded);
-      };
-
-      request.onload = () => {
-        if (request.status >= 200 && request.status < 300) {
-          const nextOffset = Number(request.getResponseHeader('upload-offset') || end);
-          onProgress(Math.min(nextOffset, file.size));
-          resolve(uploadChunk(nextOffset, 0));
-          return;
-        }
-
-        const retryDelay = retryDelays[attempt];
-        if (retryDelay != null) {
-          window.setTimeout(() => {
-            void uploadChunk(offset, attempt + 1).then(resolve).catch(reject);
-          }, retryDelay);
-          return;
-        }
-
-        reject(new Error(`Cloudflare Stream tus upload failed (${request.status})`));
-      };
-
-      request.onerror = () => {
-        const retryDelay = retryDelays[attempt];
-        if (retryDelay != null) {
-          window.setTimeout(() => {
-            void uploadChunk(offset, attempt + 1).then(resolve).catch(reject);
-          }, retryDelay);
-          return;
-        }
-
-        reject(new Error('Cloudflare Stream tus upload failed.'));
-      };
-
-      request.send(chunk);
-    });
   };
 
-  return uploadChunk(0).catch((error) => {
-    if (error instanceof Error && error.message.startsWith('Cloudflare Stream tus upload failed')) throw error;
-    throw new Error('Cloudflare Stream upload failed. Falling back to R2 original upload.');
+  const workers = Array.from(
+    { length: Math.min(VIDEO_MULTIPART_CONCURRENCY, Math.max(missingParts.length, 1)) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  onProgress(file.size);
+}
+
+async function uploadVideoPartWithRetry(input: {
+  blob: Blob;
+  galleryId: string;
+  onProgress: (bytesUploaded: number) => void;
+  partNumber: number;
+  signal?: AbortSignal;
+  uploadJobId: string;
+}) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < VIDEO_PART_RETRY_DELAYS.length; attempt += 1) {
+    if (input.signal?.aborted) throw new DOMException('Upload paused.', 'AbortError');
+    const delay = VIDEO_PART_RETRY_DELAYS[attempt];
+    if (delay > 0) await wait(delay);
+
+    try {
+      const signed = await createVideoUploadPartUrl(input.galleryId, input.uploadJobId, input.partNumber);
+      await putBlobToSignedUrl(input.blob, signed.part, input.onProgress, input.signal);
+      return;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`R2 multipart part ${input.partNumber} failed.`);
+}
+
+function putBlobToSignedUrl(
+  blob: Blob,
+  signed: { headers: Record<string, string>; method: 'PUT'; url: string },
+  onProgress: (bytesUploaded: number) => void,
+  signal?: AbortSignal,
+) {
+  return new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      callback();
+    };
+    const abort = () => request.abort();
+
+    request.open(signed.method, signed.url);
+    Object.entries(signed.headers ?? {}).forEach(([name, value]) => request.setRequestHeader(name, value));
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded);
+    };
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        onProgress(blob.size);
+        finish(resolve);
+      } else {
+        finish(() => reject(new Error(`R2 multipart part failed (${request.status})`)));
+      }
+    };
+    request.onerror = () => finish(() => reject(new Error('R2 multipart part failed.')));
+    request.onabort = () => finish(() => reject(new DOMException('Upload paused.', 'AbortError')));
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    request.send(blob);
   });
 }
