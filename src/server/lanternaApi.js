@@ -5,6 +5,7 @@ import { accountForUser, assertGalleryMembership, currentUser, publicGalleryBySl
 import { empty, errorJson, json, readJson, routePath } from './http.js';
 import { buildDeliveryEmailContent, sendTransactionalEmail } from './transactionalEmail.js';
 import { createPaidUnlockCheckout, paidUnlockSession, recoverPaidUnlock, stripeWebhook } from './stripeCheckout.js';
+import { resolveGalleryDownloadPermission, resolveVideoDownloadPermission } from './downloadPermissions.js';
 
 const uploadTargetTypes = new Set(['video', 'photo']);
 const PUBLIC_STREAM_PLAYBACK_TTL_SECONDS = 21600;
@@ -1075,20 +1076,37 @@ async function publicGalleryPayload(env, gallery) {
   const publishableVideos = videos.filter((video) => video.processing_status === 'ready' || (video.processing_status == null && video.stream_ready !== false));
   const photos = await supabaseRest(env, `photos?select=id,album_id,r2_key,width,height&gallery_id=eq.${encodeURIComponent(gallery.id)}&deleted_at=is.null&order=sort_order.asc`);
   const design = await supabaseRest(env, `gallery_design?select=*&gallery_id=eq.${encodeURIComponent(gallery.id)}&limit=1`);
-  const branding = await supabaseRest(env, `vendor_branding?select=studio_name,tagline,accent_color,custom_domain&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`);
+  const branding = await supabaseRest(env, `vendor_branding?select=studio_name,tagline,accent_color,custom_domain,default_downloads&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`);
   const designRow = design?.[0] ?? null;
+  const brandingRow = branding?.[0] ?? null;
+  const galleryAllowsDownloads = resolveGalleryDownloadPermission(designRow?.allow_downloads, brandingRow?.default_downloads);
+  const resolvedVideos = publishableVideos.map((video) => ({
+    ...video,
+    download_enabled: resolveVideoDownloadPermission(
+      video.download_enabled,
+      designRow?.allow_downloads,
+      brandingRow?.default_downloads,
+    ),
+  }));
   const mediaKeys = [
     designRow?.background_r2_key,
-    ...publishableVideos.flatMap((video) => video.paid_unlock_enabled ? [video.poster_r2_key] : [video.r2_key, video.web_copy_r2_key, video.poster_r2_key]),
+    ...resolvedVideos.flatMap((video) => {
+      if (video.paid_unlock_enabled) return [video.poster_r2_key];
+      return [
+        video.download_enabled ? video.r2_key : null,
+        video.web_copy_r2_key,
+        video.poster_r2_key,
+      ];
+    }),
     ...photos.map((photo) => photo.r2_key),
   ];
   const media = await publicSignedMediaUrls(env, gallery, mediaKeys);
-  const stream = await streamPlaybackUrls(env, publishableVideos);
+  const stream = await streamPlaybackUrls(env, resolvedVideos);
 
   return {
     gallery: {
       accessType: gallery.access_type,
-      allowDownloads: designRow?.allow_downloads ?? true,
+      allowDownloads: galleryAllowsDownloads,
       clientName: gallery.client_name,
       design: designRow,
       eventDate: gallery.event_date,
@@ -1096,15 +1114,15 @@ async function publicGalleryPayload(env, gallery) {
       photos,
       slug: gallery.slug,
       status: gallery.status,
-      videos: publishableVideos,
+      videos: resolvedVideos,
     },
     media,
     stream,
     workspace: {
-      accentColor: branding?.[0]?.accent_color ?? '#FFB24D',
-      customDomain: branding?.[0]?.custom_domain ?? null,
-      studioName: branding?.[0]?.studio_name ?? 'Lanterna Studio',
-      tagline: branding?.[0]?.tagline ?? null,
+      accentColor: brandingRow?.accent_color ?? '#FFB24D',
+      customDomain: brandingRow?.custom_domain ?? null,
+      studioName: brandingRow?.studio_name ?? 'Lanterna Studio',
+      tagline: brandingRow?.tagline ?? null,
     },
   };
 }

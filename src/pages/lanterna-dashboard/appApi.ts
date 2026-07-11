@@ -334,6 +334,7 @@ export async function unlockPublicGallery(slug: string, password: string) {
 
 export type PaidUnlockSessionPayload = {
   buyerEmail: string | null;
+  downloadAllowed: boolean;
   media: Record<string, SignedMediaUrl>;
   stream?: Record<string, SignedStreamPlayback>;
   videoId: string;
