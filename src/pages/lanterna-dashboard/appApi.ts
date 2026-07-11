@@ -27,6 +27,30 @@ async function postApi<T>(path: string, body: unknown) {
   return await response.json() as T;
 }
 
+export async function createGalleryRemote(input: {
+  accessType: 'public' | 'password' | 'private';
+  clientName: string;
+  eventDate: string | null;
+  name: string;
+  passwordConfigured: boolean;
+  projectType: 'wedding' | 'engagement' | 'portrait';
+}) {
+  return postApi<{
+    gallery: {
+      accessType: 'public' | 'password' | 'private';
+      clientName: string;
+      eventDate: string | null;
+      id: string;
+      name: string;
+      passwordSet: boolean;
+      projectType: 'wedding' | 'engagement' | 'portrait';
+      slug: string;
+      status: 'draft';
+    };
+    ok: boolean;
+  }>('/api/gallery/create', input);
+}
+
 export async function publishGallery(galleryId: string) {
   return postApi<{ gallery: { id: string; status: 'published' | 'delivered' }; ok: boolean }>('/api/gallery/publish', {
     galleryId,
