@@ -3,6 +3,7 @@ import { publicGalleryAccessError } from './galleryAccess.js';
 import { createStreamPlayback } from './cloudflareStream.js';
 import { createR2PresignedGetUrl } from './r2Signing.js';
 import { publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
+import { resolveVideoDownloadPermission } from './downloadPermissions.js';
 
 const STRIPE_API_BASE = 'https://api.stripe.com/v1';
 const PLATFORM_FEE_RATE = 0.1;
@@ -304,15 +305,41 @@ export async function stripeWebhook(request, env) {
   return json({ ok: true });
 }
 
-function sessionUnlockMediaKeys(video) {
-  return [video.r2_key, video.web_copy_r2_key, video.poster_r2_key].filter(Boolean);
+function sessionUnlockMediaKeys(video, downloadAllowed) {
+  return [downloadAllowed ? video.r2_key : null, video.web_copy_r2_key, video.poster_r2_key].filter(Boolean);
+}
+
+async function downloadSettingsForGallery(env, gallery) {
+  const [design, branding] = await Promise.all([
+    supabaseRest(
+      env,
+      `gallery_design?select=allow_downloads&gallery_id=eq.${encodeURIComponent(gallery.id)}&limit=1`,
+      { headers: { accept: 'application/json' } },
+    ),
+    supabaseRest(
+      env,
+      `vendor_branding?select=default_downloads&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`,
+      { headers: { accept: 'application/json' } },
+    ),
+  ]);
+
+  return {
+    galleryAllowDownloads: design?.[0]?.allow_downloads,
+    vendorDefaultDownloads: branding?.[0]?.default_downloads,
+  };
 }
 
 async function unlockPayloadForPurchase(env, gallery, purchase) {
   if (!purchase || purchase.status !== 'complete') return null;
   const video = await paidVideoForGallery(env, gallery, purchase.video_id);
+  const settings = await downloadSettingsForGallery(env, gallery);
+  const downloadAllowed = resolveVideoDownloadPermission(
+    video.download_enabled,
+    settings.galleryAllowDownloads,
+    settings.vendorDefaultDownloads,
+  );
   const media = {};
-  for (const key of sessionUnlockMediaKeys(video)) {
+  for (const key of sessionUnlockMediaKeys(video, downloadAllowed)) {
     media[key] = await createR2PresignedGetUrl(env, { expiresInSeconds: 900, key });
   }
   const stream = video.stream_uid && video.stream_ready !== false && env.CLOUDFLARE_STREAM_SIGNING_KEY_ID && env.CLOUDFLARE_STREAM_SIGNING_JWK
@@ -321,6 +348,7 @@ async function unlockPayloadForPurchase(env, gallery, purchase) {
 
   return {
     buyerEmail: purchase.buyer_email || null,
+    downloadAllowed,
     media,
     stream,
     videoId: video.id,

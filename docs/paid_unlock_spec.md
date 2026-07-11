@@ -73,7 +73,7 @@ After unlock, the session verification response returns:
 - signed Cloudflare Stream playback when `stream_uid` is present and ready;
 - the unlocked `videoId`, used by the public page to open the player.
 
-Unlocked playback behaves like normal public playback. Stream is preferred when available, with R2 fallback. Download appears only if the gallery allows downloads and the video has not disabled downloads.
+Unlocked playback behaves like normal public playback. Stream is preferred when available, with the derived `web_copy_r2_key` as the R2 playback fallback. Download permission resolves in this order: a non-null video `download_enabled` override wins, otherwise the gallery `allow_downloads` value wins when non-null, otherwise the vendor `default_downloads` value applies. The original `r2_key` is signed only when that resolved permission is true; paid unlock grants viewing and does not bypass it.
 
 Unlock state is a server-side purchase fact. The buyer can restore an unlock from another browser or device by entering the email address Stripe collected at checkout. No viewer account is created.
 

@@ -373,7 +373,7 @@ function PublicFilmPlayer({
   const streamUrl = stream?.iframeUrl ?? '';
   const downloadKey = sourceVideo?.r2Key || sourceVideo?.webCopyR2Key || null;
   const downloadUrl = downloadKey ? mediaUrls[downloadKey] : '';
-  const downloadAllowed = Boolean(gallery.allowDownloads && sourceVideo?.downloadEnabled !== false && downloadUrl);
+  const downloadAllowed = Boolean(sourceVideo?.downloadEnabled !== false && downloadUrl);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
