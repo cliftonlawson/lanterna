@@ -22,8 +22,8 @@ export type GalleryRecord = {
   status: GalleryStatus;
   cover_video_id: string | null;
   cover_photo_id: string | null;
-  storage_tier: StorageTier;
-  archived_at: string | null;
+  storage_tier?: StorageTier;
+  archived_at?: string | null;
 };
 
 export type GalleryDesignRecord = {
@@ -244,8 +244,6 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       status: gallery.status,
       cover_video_id: coverVideo ? videoDatabaseId(coverVideo.id) : null,
       cover_photo_id: coverPhoto ? photoDatabaseId(coverPhoto.id) : null,
-      storage_tier: gallery.archived ? 'archived' : 'hot',
-      archived_at: gallery.archived ? new Date().toISOString() : null,
     },
     design: {
       gallery_id: galleryId,

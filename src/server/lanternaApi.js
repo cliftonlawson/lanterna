@@ -243,6 +243,53 @@ async function publishGallery(request, env) {
   return json({ gallery: { id: gallery.id, status: gallery.status === 'delivered' ? 'delivered' : 'published' }, ok: true });
 }
 
+async function setGalleryArchived(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  if (typeof body.archived !== 'boolean') throw new Error('archived must be true or false.');
+
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const archivedAt = body.archived ? new Date().toISOString() : null;
+  const rows = await supabaseRest(
+    env,
+    `galleries?select=id,archived_at&id=eq.${encodeURIComponent(gallery.id)}&account_id=eq.${encodeURIComponent(accountId)}&deleted_at=is.null`,
+    {
+      method: 'PATCH',
+      headers: { prefer: 'return=representation' },
+      body: JSON.stringify({ archived_at: archivedAt }),
+    },
+  );
+  const updated = rows?.[0];
+  if (!updated) return errorJson('Gallery not found for this account.', 404);
+
+  return json({
+    gallery: { archivedAt: updated.archived_at, id: updated.id },
+    ok: true,
+  });
+}
+
+async function deleteGallery(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const result = await supabaseRest(env, 'rpc/request_gallery_soft_delete', {
+    method: 'POST',
+    body: JSON.stringify({
+      target_account_id: accountId,
+      target_gallery_id: galleryId,
+    }),
+  });
+
+  return json({
+    alreadyDeleted: Boolean(result?.alreadyDeleted),
+    deletedAt: result?.deletedAt ?? null,
+    galleryId: result?.galleryId ?? galleryId,
+    ok: true,
+    purgeTaskId: result?.purgeTaskId ?? null,
+  });
+}
+
 async function uploadSlot(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
@@ -1217,6 +1264,8 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'media/urls') return await mediaUrls(request, env);
     if (request.method === 'POST' && path === 'stream/playback') return await streamPlayback(request, env);
     if (request.method === 'POST' && path === 'gallery/publish') return await publishGallery(request, env);
+    if (request.method === 'POST' && path === 'gallery/archive') return await setGalleryArchived(request, env);
+    if (request.method === 'POST' && path === 'gallery/delete') return await deleteGallery(request, env);
     if (request.method === 'POST' && path === 'delivery/record') return await deliveryRecord(request, env);
     if (request.method === 'POST' && path === 'stripe/webhook') return await stripeWebhook(request, env);
     if (request.method === 'GET' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/session')) return await paidUnlockSession(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/session$/, ''));

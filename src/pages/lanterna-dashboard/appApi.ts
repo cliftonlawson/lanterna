@@ -33,6 +33,23 @@ export async function publishGallery(galleryId: string) {
   });
 }
 
+export async function setGalleryArchivedRemote(galleryId: string, archived: boolean) {
+  return postApi<{ gallery: { archivedAt: string | null; id: string }; ok: boolean }>('/api/gallery/archive', {
+    archived,
+    galleryId,
+  });
+}
+
+export async function softDeleteGalleryRemote(galleryId: string) {
+  return postApi<{
+    alreadyDeleted: boolean;
+    deletedAt: string;
+    galleryId: string;
+    ok: boolean;
+    purgeTaskId: string;
+  }>('/api/gallery/delete', { galleryId });
+}
+
 export async function recordGalleryDelivery(input: {
   galleryId: string;
   message: string;

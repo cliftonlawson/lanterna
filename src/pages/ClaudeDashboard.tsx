@@ -20,6 +20,7 @@ import {
   saveDashboardGalleries,
   saveUploadJobs,
   saveWorkspaceAccount,
+  setGalleryArchived,
   softDeleteGalleryMedia,
 } from './lanterna-dashboard/dashboardRepository';
 import { invalidRecipientEmails, parseRecipientEmails } from './lanterna-dashboard/delivery';
@@ -207,9 +208,18 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     setDetailOpen(true);
   };
 
-  const archiveGallery = (id: string) => {
-    commitGalleries((prev) => prev.map((gallery) => gallery.id === id ? { ...gallery, archived: !gallery.archived } : gallery), 'archive');
-    showToast('Gallery updated');
+  const archiveGallery = async (id: string) => {
+    const gallery = galleries.find((item) => item.id === id);
+    if (!gallery) return;
+
+    const archived = !gallery.archived;
+    try {
+      await setGalleryArchived(id, archived);
+      commitGalleries((prev) => prev.map((item) => item.id === id ? { ...item, archived } : item), 'archive');
+      showToast(archived ? 'Gallery archived' : 'Gallery restored');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Gallery update failed');
+    }
   };
 
   const updateActiveDesign = (patch: Partial<GalleryDesign>) => {
