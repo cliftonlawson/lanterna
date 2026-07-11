@@ -1075,7 +1075,9 @@
 .modal-card h2 { margin: 0 0 6px; }
 .modal-card p { color: var(--muted); margin: 0 0 18px; }
 .modal-card label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+.modal-form-error { margin: 2px 0 14px; padding: 10px 12px; border: 1px solid rgba(232,92,92,.38); border-radius: 8px; background: rgba(232,92,92,.1); color: #F0A2A2; font-size: 13px; line-height: 1.45; }
 .modal-close, .drawer-close { position: absolute; top: 18px; right: 18px; border: 0; border-radius: 10px; background: var(--chip); color: var(--text2); width: 36px; height: 36px; display: grid; place-items: center; cursor: pointer; }
+.modal-close:disabled { cursor: wait; opacity: .55; }
 .drawer-close { display: flex; width: auto; gap: 8px; padding: 0 12px; color: #F0E9DC; background: rgba(255,255,255,.12); }
 .video-drawer { width: min(940px,100%); max-height: calc(100vh - 76px); overflow: auto; border-radius: 22px; background: var(--surface-solid); border: 1px solid var(--border-strong); box-shadow: 0 30px 90px rgba(0,0,0,.65); }
 .video-drawer > p { color: var(--muted); margin: 18px 22px; }

@@ -5,6 +5,7 @@ import {
   completeBackgroundUpload,
   completeUpload,
   createBackgroundUploadSlot,
+  createGalleryRemote,
   createUploadSlot,
   postFileToStream,
   processUploadedVideos,
@@ -61,6 +62,8 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   const [galleries, setGalleries] = useState<DashboardGallery[]>([]);
   const [activeId, setActiveId] = useState('');
   const [newOpen, setNewOpen] = useState(false);
+  const [creatingGallery, setCreatingGallery] = useState(false);
+  const [createGalleryError, setCreateGalleryError] = useState('');
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailVideoId, setDetailVideoId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
@@ -68,6 +71,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const gallerySaveQueueRef = useRef(Promise.resolve());
+  const createGalleryRequestRef = useRef(false);
 
   const activeGallery = galleries.find((gallery) => gallery.id === activeId) ?? galleries[0];
 
@@ -251,42 +255,73 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     if (result.mode === 'local') showToast(result.reason ?? 'Film removed locally; database delete did not complete');
   };
 
-  const createGallery = (event: React.FormEvent<HTMLFormElement>) => {
+  const createGallery = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (createGalleryRequestRef.current) return;
+
     const data = new FormData(event.currentTarget);
-    const name = String(data.get('name') || 'Untitled gallery');
+    const name = String(data.get('name') || '').trim() || 'Untitled gallery';
     const project = String(data.get('project') || 'Weddings') as DashboardGallery['project'];
     const access = String(data.get('access') || 'Private') as DashboardGallery['access'];
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `gallery-${Date.now()}`;
-    const gallery: DashboardGallery = {
-      id: crypto.randomUUID(),
-      slug,
-      name,
-      client: String(data.get('client') || name),
-      date: String(data.get('date') || 'Just now'),
-      project,
-      videos: 0,
-      photos: 0,
-      views: '0',
-      status: 'draft',
-      access,
-      allowDownloads: false,
-      autoExpire: false,
-      passwordSet: access !== 'Password' ? false : Boolean(data.get('password')),
-      coverChosen: false,
-      deliveryDraft: defaultDeliveryDraft(),
-      design: defaultGalleryDesign(name, mediaTileGradients[galleries.length % mediaTileGradients.length]),
-      gradient: mediaTileGradients[galleries.length % mediaTileGradients.length],
-      videoItems: [],
-      albums: [],
-      photoItems: [],
-      recipients: [],
-    };
-    commitGalleries((prev) => [gallery, ...prev], 'create');
-    setActiveId(gallery.id);
-    setNewOpen(false);
-    setView('upload');
-    showToast(`Gallery "${name}" created`);
+    const passwordConfigured = Boolean(String(data.get('password') || '').trim());
+    if (access === 'Password' && !passwordConfigured) {
+      setCreateGalleryError('Set a password before creating this gallery.');
+      return;
+    }
+
+    createGalleryRequestRef.current = true;
+    setCreatingGallery(true);
+    setCreateGalleryError('');
+
+    try {
+      const result = await createGalleryRemote({
+        accessType: access === 'Public' ? 'public' : access === 'Password' ? 'password' : 'private',
+        clientName: String(data.get('client') || '').trim() || name,
+        eventDate: String(data.get('date') || '').trim() || null,
+        name,
+        passwordConfigured,
+        projectType: project === 'Engagements' ? 'engagement' : project === 'Portraits' ? 'portrait' : 'wedding',
+      });
+      const persisted = result.gallery;
+      const gallery: DashboardGallery = {
+        id: persisted.id,
+        slug: persisted.slug,
+        name: persisted.name,
+        client: persisted.clientName,
+        date: persisted.eventDate || 'Just now',
+        project,
+        videos: 0,
+        photos: 0,
+        views: '0',
+        status: persisted.status,
+        access,
+        allowDownloads: false,
+        autoExpire: false,
+        passwordSet: persisted.passwordSet,
+        coverChosen: false,
+        deliveryDraft: defaultDeliveryDraft(),
+        design: defaultGalleryDesign(persisted.name, mediaTileGradients[galleries.length % mediaTileGradients.length]),
+        gradient: mediaTileGradients[galleries.length % mediaTileGradients.length],
+        videoItems: [],
+        albums: [],
+        photoItems: [],
+        recipients: [],
+      };
+
+      commitGalleries((prev) => [gallery, ...prev], 'create');
+      setActiveId(gallery.id);
+      setNewOpen(false);
+      setView('upload');
+      showToast(`Gallery "${name}" created`);
+    } catch (error) {
+      const message = error instanceof Error && error.message !== 'Failed to fetch'
+        ? error.message
+        : 'Gallery could not be saved. Check your connection and try again.';
+      setCreateGalleryError(message);
+    } finally {
+      createGalleryRequestRef.current = false;
+      setCreatingGallery(false);
+    }
   };
 
   const sendDelivery = async () => {
@@ -580,7 +615,10 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           onArchiveGallery={archiveGallery}
           onArchiveTabChange={setArchiveTab}
           onBack={onBack}
-          onNewGallery={() => setNewOpen(true)}
+          onNewGallery={() => {
+            setCreateGalleryError('');
+            setNewOpen(true);
+          }}
           onOpenGallery={openGallery}
           onQueryChange={setQuery}
           onSignUp={onSignUp}
@@ -626,7 +664,17 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       {view === 'vendor' && <VendorDashboardScreen workspace={workspace} onWorkspaceChange={updateWorkspace} />}
       {view === 'account' && <AccountScreen workspace={workspace} />}
 
-      {newOpen && <NewGalleryModal onClose={() => setNewOpen(false)} onCreate={createGallery} />}
+      {newOpen && (
+        <NewGalleryModal
+          error={createGalleryError}
+          submitting={creatingGallery}
+          onClose={() => {
+            setCreateGalleryError('');
+            setNewOpen(false);
+          }}
+          onCreate={createGallery}
+        />
+      )}
       {detailOpen && activeGallery && (
         <VideoDrawer
           gallery={activeGallery}

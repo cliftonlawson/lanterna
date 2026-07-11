@@ -2,7 +2,7 @@ import { createR2PresignedGetUrl, createR2PresignedPutUrl, mediaObjectKey } from
 import { createStreamDirectUpload, createStreamPlayback, createStreamTusUpload, getStreamVideo } from './cloudflareStream.js';
 import { publicGalleryAccessError } from './galleryAccess.js';
 import { accountForUser, assertGalleryMembership, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
-import { empty, errorJson, json, readJson, routePath } from './http.js';
+import { empty, errorJson, json, readJson, routePath, safeSlug } from './http.js';
 import { buildDeliveryEmailContent, sendTransactionalEmail } from './transactionalEmail.js';
 import { createPaidUnlockCheckout, paidUnlockSession, recoverPaidUnlock, stripeWebhook } from './stripeCheckout.js';
 import { resolveGalleryDownloadPermission, resolveVideoDownloadPermission } from './downloadPermissions.js';
@@ -14,6 +14,8 @@ const DEFAULT_UPLOAD_ALLOWANCE_GB = 50;
 const DEFAULT_UPLOAD_JOB_STALE_MINUTES = 180;
 const STREAM_FAILED_STATES = new Set(['error', 'failed', 'failure', 'cancelled', 'canceled']);
 const STREAM_TERMINAL_ERROR_PATTERN = /not found|does not exist|invalid/i;
+const GALLERY_ACCESS_TYPES = new Set(['public', 'password', 'private']);
+const GALLERY_PROJECT_TYPES = new Set(['wedding', 'engagement', 'portrait']);
 
 function publicBaseUrl(env) {
   return String(env.PUBLIC_DELIVERY_BASE_URL || env.APP_URL || 'http://127.0.0.1:5173').replace(/\/+$/, '');
@@ -242,6 +244,112 @@ async function publishGallery(request, env) {
   }
 
   return json({ gallery: { id: gallery.id, status: gallery.status === 'delivered' ? 'delivered' : 'published' }, ok: true });
+}
+
+function gallerySlugCandidate(base, number) {
+  if (number === 1) return base;
+  const suffix = `-${number}`;
+  return `${base.slice(0, Math.max(1, 100 - suffix.length))}${suffix}`;
+}
+
+async function globallyUniqueGallerySlug(env, name) {
+  const normalized = safeSlug(name);
+  const base = normalized === 'file' && !/[a-z0-9]/i.test(name) ? 'gallery' : normalized;
+
+  for (let number = 1; number <= 10000; number += 1) {
+    const slug = gallerySlugCandidate(base, number);
+    const rows = await supabaseRest(
+      env,
+      `galleries?select=id&slug=eq.${encodeURIComponent(slug)}&limit=1`,
+      { headers: { accept: 'application/json' } },
+    );
+    if (!rows?.length) return slug;
+  }
+
+  throw new Error('Could not allocate a unique gallery link.');
+}
+
+function isGallerySlugConflict(error) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /duplicate key|unique constraint/i.test(message) && /slug/i.test(message);
+}
+
+async function createGallery(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const name = requireString(body, 'name').slice(0, 200);
+  const clientName = String(body.clientName || '').trim().slice(0, 200) || name;
+  const eventDate = String(body.eventDate || '').trim() || null;
+  const accessType = String(body.accessType || '').trim();
+  const projectType = String(body.projectType || '').trim();
+
+  if (!GALLERY_ACCESS_TYPES.has(accessType)) throw new Error('Choose a valid gallery access type.');
+  if (!GALLERY_PROJECT_TYPES.has(projectType)) throw new Error('Choose a valid project type.');
+  if (eventDate && !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) throw new Error('Event date must use YYYY-MM-DD.');
+  if (accessType === 'password' && body.passwordConfigured !== true) {
+    return errorJson('Set a gallery password before creating this gallery.', 422, { code: 'password_required' });
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const galleryId = crypto.randomUUID();
+    const slug = await globallyUniqueGallerySlug(env, name);
+
+    try {
+      await supabaseRest(env, 'galleries', {
+        method: 'POST',
+        headers: { prefer: 'return=minimal' },
+        body: JSON.stringify({
+          access_type: accessType,
+          account_id: accountId,
+          client_name: clientName,
+          event_date: eventDate,
+          id: galleryId,
+          name,
+          password_hash: accessType === 'password' ? `ui-configured:${slug}` : null,
+          project_type: projectType,
+          slug,
+        }),
+      });
+    } catch (error) {
+      if (isGallerySlugConflict(error)) continue;
+      throw error;
+    }
+
+    try {
+      await supabaseRest(env, 'gallery_design', {
+        method: 'POST',
+        headers: { prefer: 'return=minimal' },
+        body: JSON.stringify({
+          allow_downloads: false,
+          gallery_id: galleryId,
+          heading_title: name,
+        }),
+      });
+    } catch (error) {
+      await supabaseRest(env, `galleries?id=eq.${encodeURIComponent(galleryId)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+        method: 'DELETE',
+        headers: { prefer: 'return=minimal' },
+      });
+      throw error;
+    }
+
+    return json({
+      gallery: {
+        accessType,
+        clientName,
+        eventDate,
+        id: galleryId,
+        name,
+        passwordSet: accessType === 'password',
+        projectType,
+        slug,
+        status: 'draft',
+      },
+      ok: true,
+    }, { status: 201 });
+  }
+
+  return errorJson('A unique gallery link could not be reserved. Try again.', 409, { code: 'slug_conflict' });
 }
 
 async function setGalleryArchived(request, env) {
@@ -1281,6 +1389,7 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'poster/capture-frame') return await posterCaptureFrame(request, env);
     if (request.method === 'POST' && path === 'media/urls') return await mediaUrls(request, env);
     if (request.method === 'POST' && path === 'stream/playback') return await streamPlayback(request, env);
+    if (request.method === 'POST' && path === 'gallery/create') return await createGallery(request, env);
     if (request.method === 'POST' && path === 'gallery/publish') return await publishGallery(request, env);
     if (request.method === 'POST' && path === 'gallery/archive') return await setGalleryArchived(request, env);
     if (request.method === 'POST' && path === 'gallery/delete') return await deleteGallery(request, env);
