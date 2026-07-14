@@ -287,7 +287,9 @@ usage_events                    -- append-only FLOW meter: allowance consumed on
   id              uuid pk
   account_id      uuid fk -> accounts.id
   entitlement_id  uuid null fk -> entitlements.id   -- which grant it drew from
-  gb              numeric(10,2)
+  bytes           bigint                           -- provider-verified byte truth
+  gb              numeric(18,9)                    -- decimal bytes / 1,000,000,000
+  upload_job_id   uuid null                         -- unique when tied to a client upload
   gallery_id      uuid null fk -> galleries.id
   video_id        uuid null fk -> videos.id
   photo_id        uuid null fk -> photos.id
@@ -296,7 +298,7 @@ usage_events                    -- append-only FLOW meter: allowance consumed on
 
 account_usage                   -- cached rollup; the dashboard reads this
   account_id              uuid pk fk -> accounts.id
-  allowance_used_gb       numeric(12,2)   -- FLOW: consumed this period, gates uploads
+  allowance_used_gb       numeric(18,9)   -- FLOW: decimal GB consumed this period
   allowance_total_gb      numeric(12,2)   -- sum of active entitlements
   hot_bytes_stored        bigint          -- STOCK: reconciled FROM Cloudflare R2
   cold_bytes_stored       bigint          -- STOCK: R2 Infrequent Access
@@ -307,6 +309,7 @@ account_usage                   -- cached rollup; the dashboard reads this
 The two meters, made explicit:
 
 - **Flow meter** (`allowance_used_gb` vs `allowance_total_gb`): increments on every successful upload via a server-written `usage_events` row, resets/recomputes per entitlement period, and **does not decrease when a gallery is deleted**. Authenticated clients can read usage, but cannot insert usage events directly. This is what the upload-slot Worker checks and what gates new uploads. This is what the customer is buying.
+- **Unit rule**: storage allowances use decimal GB (`1 GB = 1,000,000,000 bytes`). Exact provider-verified bytes are retained on every new event so small photos cannot round down to zero and the rollup can be reproduced without trusting display precision.
 - **Stock meter** (`hot_bytes_stored`, `cold_bytes_stored`, `stream_minutes_stored`): the real bytes and minutes, reconciled from Cloudflare on a schedule. This drives *your* cost and your cold-tiering decisions, not the customer's allowance.
 - **Launch deferral**: stock-meter reconciliation is post-launch. Do not enqueue `reconcile_usage` tasks until the Cloudflare reconciliation worker/admin command exists; the upload allowance gate uses the flow meter, not stock-meter reconciliation.
 
@@ -333,8 +336,8 @@ upload_jobs
   id                  uuid pk
   account_id          uuid fk -> accounts.id
   gallery_id          uuid fk -> galleries.id
-  target_type         upload_target          -- video | photo
-  target_id           uuid null              -- video/photo id once the record exists
+  target_type         text                   -- video | photo | background | poster
+  target_id           uuid null              -- media id; gallery id for a background
   status              job_status             -- pending | uploading | paused | processing | complete | errored
   bytes_total         bigint
   bytes_uploaded      bigint default 0
@@ -358,6 +361,8 @@ upload_jobs
   updated_at          timestamptz default now()
   index (account_id, status)
 ```
+
+For direct PUT uploads (photos, backgrounds, and uploaded posters), the slot writes the expected key, byte count, content type, and target to `upload_jobs` before returning the presigned URL. The expected `Content-Length` is part of the R2 signature, preventing the issued URL from accepting a differently sized object. Completion accepts the job identity, performs an R2 `HEAD`, and calls one service-only transaction that attaches the object, completes the job, and inserts the uniquely keyed usage event. Client-reported keys and byte counts are never completion authority. `gallery_design.background_r2_key` and `music_track_r2_key` are server-owned asset pointers even though the remaining design fields stay studio-editable. Repeating completion returns the original result without incrementing allowance again.
 
 Video ingestion is R2-first. The browser uploads the master once through the server-issued multipart session. The server completes the multipart upload, verifies actual bytes and content type with R2 `HEAD`, attaches the master and records allowance usage exactly once, then gives Stream a time-limited R2 GET through `/stream/copy`. `master_secured` means the retained original is safe; only `ready` means Stream playback is encoded. Copy or encode failure moves the job to `copy_failed` while retaining the verified master for a no-reupload retry. Replacement status is derived server-side, and the existing video row is not swapped until the replacement Stream copy is ready.
 

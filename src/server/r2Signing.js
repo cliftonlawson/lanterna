@@ -58,6 +58,7 @@ export function mediaObjectKey({ accountId, galleryId, objectName = 'original', 
 }
 
 async function createR2PresignedUrl(env, {
+  contentLength,
   contentType,
   expiresInSeconds,
   key,
@@ -74,8 +75,17 @@ async function createR2PresignedUrl(env, {
   const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
   const credential = `${env.R2_ACCESS_KEY_ID}/${credentialScope}`;
   const signsContentType = method === 'PUT' && contentType;
-  const signedHeaders = signsContentType ? 'content-type;host' : 'host';
-  const canonicalHeaders = signsContentType ? `content-type:${contentType}\nhost:${host}\n` : `host:${host}\n`;
+  const signsContentLength = method === 'PUT' && Number.isSafeInteger(contentLength) && contentLength > 0;
+  const headerValues = {
+    ...(signsContentLength ? { 'content-length': String(contentLength) } : {}),
+    ...(signsContentType ? { 'content-type': contentType } : {}),
+    host,
+  };
+  const signedHeaders = Object.keys(headerValues).sort().join(';');
+  const canonicalHeaders = Object.entries(headerValues)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}:${value}\n`)
+    .join('');
   const canonicalUri = `/${encodeKeyPath(bucket)}/${encodeKeyPath(key)}`;
   const query = {
     'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
@@ -103,8 +113,8 @@ async function createR2PresignedUrl(env, {
   };
 }
 
-export async function createR2PresignedPutUrl(env, { key, contentType, expiresInSeconds = 900, now = new Date() }) {
-  return createR2PresignedUrl(env, { contentType, expiresInSeconds, key, method: 'PUT', now });
+export async function createR2PresignedPutUrl(env, { key, contentLength, contentType, expiresInSeconds = 900, now = new Date() }) {
+  return createR2PresignedUrl(env, { contentLength, contentType, expiresInSeconds, key, method: 'PUT', now });
 }
 
 export async function createR2PresignedGetUrl(env, { key, expiresInSeconds = 600, now = new Date() }) {

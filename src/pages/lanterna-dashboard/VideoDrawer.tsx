@@ -171,18 +171,17 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
         videoId: video.id,
       });
       await putFileToR2(file, slot.r2, () => undefined);
-      await completePosterUpload({
-        bytes: file.size,
+      const completed = await completePosterUpload({
         galleryId: gallery.id,
-        r2Key: slot.r2.key,
+        uploadJobId: slot.uploadJobId,
         videoId: video.id,
       });
       const localPreview = URL.createObjectURL(file);
       setLocalPosterPreviewUrl(localPreview);
-      void getMediaUrls([slot.r2.key]).then((nextUrls) => {
+      void getMediaUrls([completed.r2Key]).then((nextUrls) => {
         setSignedUrls((current) => ({ ...current, ...nextUrls }));
       }).catch(() => undefined);
-      updateVideo({ posterR2Key: slot.r2.key, updatedAt: 'Poster updated' });
+      updateVideo({ posterR2Key: completed.r2Key, updatedAt: 'Poster updated' });
       onShowToast('Thumbnail uploaded');
     } catch (error) {
       onShowToast(error instanceof Error ? error.message : 'Thumbnail upload failed');

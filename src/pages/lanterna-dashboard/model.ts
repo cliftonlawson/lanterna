@@ -169,7 +169,7 @@ export const defaultWorkspaceAccount: WorkspaceAccount = {
 };
 
 export function gbToBytes(gb: number) {
-  return Math.round(gb * 1024 * 1024 * 1024);
+  return Math.round(gb * 1_000_000_000);
 }
 
 export const mediaTileGradients = [

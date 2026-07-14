@@ -5,6 +5,7 @@ import {
   completeR2MultipartUpload,
   createR2MultipartUpload,
   createR2UploadPartUrl,
+  deleteR2Object,
   headR2Object,
   listR2MultipartParts,
   multipartPartCount,
@@ -19,6 +20,7 @@ import { buildDeliveryEmailContent, sendTransactionalEmail } from './transaction
 import { createPaidUnlockCheckout, paidUnlockSession, recoverPaidUnlock, stripeWebhook } from './stripeCheckout.js';
 import { resolveGalleryDownloadPermission, resolveVideoDownloadPermission } from './downloadPermissions.js';
 import { startStreamCopyFromMaster, StreamCopyStartError } from './videoIngestion.js';
+import { bytesToGb, UploadVerificationError, verifyDirectR2Object } from './uploadAccounting.js';
 
 const uploadTargetTypes = new Set(['video', 'photo']);
 const PUBLIC_STREAM_PLAYBACK_TTL_SECONDS = 21600;
@@ -91,11 +93,6 @@ async function requireGalleryPreflight(env, gallery) {
   const failure = await galleryPreflight(env, gallery);
   if (!failure) return null;
   return errorJson(failure.message, 422, { code: failure.code });
-}
-
-function bytesToGb(bytes) {
-  const value = Number(bytes || 0);
-  return Number.isFinite(value) && value > 0 ? value / 1024 / 1024 / 1024 : 0;
 }
 
 async function accountUsage(env, accountId) {
@@ -177,6 +174,7 @@ async function recordUploadUsageEvent(env, { accountId, bytes, galleryId, target
     headers: { prefer: 'return=minimal' },
     body: JSON.stringify({
       account_id: accountId,
+      bytes,
       gallery_id: galleryId,
       gb,
       photo_id: targetType === 'photo' ? targetId : null,
@@ -206,22 +204,11 @@ async function uploadTargetExists(env, galleryId, targetId, targetType) {
   return rows?.length > 0;
 }
 
-function mediaKeyPrefix({ accountId, galleryId, targetId, targetType }) {
-  const folder = targetType === 'photo' ? 'photos' : targetType === 'background' ? 'backgrounds' : 'films';
-  return `${accountId}/${galleryId}/${folder}/${targetId}/`;
-}
-
-function requireMediaKeyPrefix(key, { accountId, galleryId, targetId, targetType }) {
-  if (!key) return;
-  const prefix = mediaKeyPrefix({ accountId, galleryId, targetId, targetType });
-  if (!key.startsWith(prefix)) throw new Error(`${targetType} key does not belong to this gallery target.`);
-}
-
 async function uploadJobForTarget(env, { accountId, galleryId, targetId, targetType, uploadJobId }) {
   if (!uploadJobId) throw new Error('uploadJobId is required.');
   const rows = await supabaseRest(
     env,
-    `upload_jobs?select=id,gallery_id,target_id,target_type,status,stream_upload_id&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}&limit=1`,
+    `upload_jobs?select=id,gallery_id,target_id,target_type,status,bytes_total,bytes_uploaded,r2_key,content_type,file_name,upload_phase,verified_bytes,completed_at,error_code,error_message,stream_upload_id&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}&limit=1`,
     { headers: { accept: 'application/json' } },
   );
   const job = rows?.[0];
@@ -229,6 +216,116 @@ async function uploadJobForTarget(env, { accountId, galleryId, targetId, targetT
     throw new Error('Upload job does not match this upload target.');
   }
   return job;
+}
+
+async function createDirectR2UploadSlot(env, {
+  accountId,
+  bytesTotal,
+  contentType,
+  fileName,
+  galleryId,
+  targetId,
+  targetType,
+}) {
+  const uploadJobId = crypto.randomUUID();
+  const objectName = targetType === 'photo'
+    ? `original-${uploadJobId}`
+    : `${targetType}-${uploadJobId}`;
+  const key = mediaObjectKey({
+    accountId,
+    fileName,
+    galleryId,
+    objectName,
+    targetId,
+    targetType,
+  });
+  const r2 = await createR2PresignedPutUrl(env, { key, contentLength: bytesTotal, contentType });
+
+  await supabaseRest(env, 'upload_jobs', {
+    method: 'POST',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({
+      account_id: accountId,
+      bytes_total: bytesTotal,
+      bytes_uploaded: 0,
+      content_type: contentType,
+      file_name: fileName,
+      gallery_id: galleryId,
+      id: uploadJobId,
+      r2_key: key,
+      status: 'pending',
+      target_id: targetId,
+      target_type: targetType,
+      upload_phase: 'uploading_master',
+    }),
+  });
+
+  return { r2, uploadJobId };
+}
+
+async function completeVerifiedDirectR2Upload(env, {
+  accountId,
+  galleryId,
+  targetId,
+  targetType,
+  uploadJobId,
+}) {
+  const job = await uploadJobForTarget(env, {
+    accountId,
+    galleryId,
+    targetId,
+    targetType,
+    uploadJobId,
+  });
+
+  if (job.status === 'complete' && job.completed_at && Number(job.verified_bytes) > 0) {
+    return callUploadRpc(env, 'complete_verified_r2_upload', {
+      p_account_id: accountId,
+      p_content_type: job.content_type,
+      p_gallery_id: galleryId,
+      p_r2_key: job.r2_key,
+      p_upload_job_id: uploadJobId,
+      p_verified_bytes: Number(job.verified_bytes),
+    });
+  }
+
+  if (!job.r2_key) throw new Error('Upload job is missing its R2 object key.');
+  const object = await headR2Object(env, job.r2_key);
+
+  let verification;
+  try {
+    verification = verifyDirectR2Object(job, object);
+  } catch (error) {
+    if (!(error instanceof UploadVerificationError)) throw error;
+
+    await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(job.id)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({
+        error_code: error.code,
+        error_message: error.message,
+        status: 'errored',
+      }),
+    });
+    if (object.exists) await deleteR2Object(env, job.r2_key).catch(() => undefined);
+
+    return {
+      error: errorJson(error.message, 409, {
+        code: error.code,
+        expectedBytes: error.expectedBytes,
+        verifiedBytes: error.verifiedBytes,
+      }),
+    };
+  }
+
+  return callUploadRpc(env, 'complete_verified_r2_upload', {
+    p_account_id: accountId,
+    p_content_type: verification.contentType,
+    p_gallery_id: galleryId,
+    p_r2_key: job.r2_key,
+    p_upload_job_id: uploadJobId,
+    p_verified_bytes: verification.verifiedBytes,
+  });
 }
 
 async function videoUploadJob(env, { accountId, galleryId, uploadJobId }) {
@@ -470,6 +567,9 @@ async function uploadSlot(request, env) {
     return errorJson('Cloudflare Stream accepts video masters up to 30 GB.', 422);
   }
   const contentType = String(body.contentType || '').trim() || 'application/octet-stream';
+  if (targetType === 'photo' && !contentType.startsWith('image/')) {
+    return errorJson('Photo uploads require an image content type.', 422);
+  }
 
   if (targetType === 'video') {
     if (!contentType.startsWith('video/')) return errorJson('Video uploads require a video content type.', 422);
@@ -581,27 +681,17 @@ async function uploadSlot(request, env) {
 
   const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
   if (allowanceError) return allowanceError;
-
-  const key = mediaObjectKey({ accountId, galleryId, targetType, targetId, fileName });
-  const r2 = await createR2PresignedPutUrl(env, { key, contentType });
-  const uploadJobId = crypto.randomUUID();
-
-  await supabaseRest(env, 'upload_jobs', {
-    method: 'POST',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({
-      account_id: accountId,
-      bytes_total: bytesTotal,
-      bytes_uploaded: 0,
-      gallery_id: gallery.id,
-      id: uploadJobId,
-      status: 'pending',
-      target_id: targetId,
-      target_type: targetType,
-    }),
+  const slot = await createDirectR2UploadSlot(env, {
+    accountId,
+    bytesTotal,
+    contentType,
+    fileName,
+    galleryId: gallery.id,
+    targetId,
+    targetType,
   });
 
-  return json({ galleryId, r2, stream: null, targetId, targetType, uploadJobId });
+  return json({ galleryId, r2: slot.r2, stream: null, targetId, targetType, uploadJobId: slot.uploadJobId });
 }
 
 async function videoMultipartPartUrl(request, env) {
@@ -871,46 +961,29 @@ async function uploadComplete(request, env) {
     });
   }
   if (targetType !== 'photo') throw new Error('targetType must be photo.');
-  const r2Key = requireString(body, 'r2Key');
-  const bytes = Number(body.bytes || 0);
+  const uploadJobId = requireString(body, 'uploadJobId');
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
   if (!await uploadTargetExists(env, gallery.id, targetId, targetType)) {
-    await markUploadJobErrored(env, accountId, body.uploadJobId);
+    await markUploadJobErrored(env, accountId, uploadJobId);
     return errorJson('Upload target no longer exists. Reload and retry the upload.', 409);
   }
-  await uploadJobForTarget(env, {
+  const completion = await completeVerifiedDirectR2Upload(env, {
     accountId,
     galleryId: gallery.id,
     targetId,
     targetType,
-    uploadJobId: body.uploadJobId,
+    uploadJobId,
   });
-  requireMediaKeyPrefix(r2Key, { accountId, galleryId: gallery.id, targetId, targetType });
+  if (completion.error) return completion.error;
 
-  await supabaseRest(env, `photos?id=eq.${encodeURIComponent(targetId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
-    method: 'PATCH',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({ r2_key: r2Key, r2_bytes: bytes, processing_status: 'ready' }),
+  return json({
+    alreadyCompleted: Boolean(completion.alreadyCompleted),
+    ok: true,
+    r2Key: completion.r2Key,
+    usageRecorded: Boolean(completion.usageRecorded),
+    verifiedBytes: Number(completion.verifiedBytes),
   });
-
-  if (body.uploadJobId) {
-    await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(body.uploadJobId)}&account_id=eq.${encodeURIComponent(accountId)}`, {
-      method: 'PATCH',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({ bytes_uploaded: bytes, status: 'complete' }),
-    });
-  }
-
-  await recordUploadUsageEvent(env, {
-    accountId,
-    bytes,
-    galleryId: gallery.id,
-    targetId,
-    targetType,
-  });
-
-  return json({ ok: true });
 }
 
 async function clearUploadJob(request, env) {
@@ -1402,16 +1475,27 @@ async function backgroundSlot(request, env) {
   const fileName = requireString(body, 'fileName');
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
-  const allowanceError = await requireUploadAllowance(env, accountId, Number(body.bytesTotal || 0));
+  const bytesTotal = Number(body.bytesTotal || 0);
+  if (!Number.isSafeInteger(bytesTotal) || bytesTotal <= 0) return errorJson('Upload size must be a positive integer.', 422);
+  const contentType = String(body.contentType || '').trim() || 'application/octet-stream';
+  if (!contentType.startsWith('image/')) return errorJson('Background uploads require an image content type.', 422);
+  const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
   if (allowanceError) return allowanceError;
 
-  const contentType = String(body.contentType || '').trim() || undefined;
-  const key = mediaObjectKey({ accountId, galleryId: gallery.id, targetType: 'background', targetId: 'hero', fileName });
-  const r2 = await createR2PresignedPutUrl(env, { key, contentType });
+  const slot = await createDirectR2UploadSlot(env, {
+    accountId,
+    bytesTotal,
+    contentType,
+    fileName,
+    galleryId: gallery.id,
+    targetId: gallery.id,
+    targetType: 'background',
+  });
 
   return json({
     galleryId: gallery.id,
-    r2,
+    r2: slot.r2,
+    uploadJobId: slot.uploadJobId,
   });
 }
 
@@ -1419,21 +1503,25 @@ async function backgroundComplete(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
   const galleryId = requireString(body, 'galleryId');
-  const r2Key = requireString(body, 'r2Key');
-  const bytes = Number(body.bytes || 0);
+  const uploadJobId = requireString(body, 'uploadJobId');
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
-  requireMediaKeyPrefix(r2Key, { accountId, galleryId: gallery.id, targetId: 'hero', targetType: 'background' });
-
-  await supabaseRest(env, `gallery_design?gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
-    method: 'PATCH',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({ background_r2_key: r2Key, background_type: 'image' }),
+  const completion = await completeVerifiedDirectR2Upload(env, {
+    accountId,
+    galleryId: gallery.id,
+    targetId: gallery.id,
+    targetType: 'background',
+    uploadJobId,
   });
+  if (completion.error) return completion.error;
 
-  await recordUploadUsageEvent(env, { accountId, bytes, galleryId: gallery.id });
-
-  return json({ ok: true, r2Key });
+  return json({
+    alreadyCompleted: Boolean(completion.alreadyCompleted),
+    ok: true,
+    r2Key: completion.r2Key,
+    usageRecorded: Boolean(completion.usageRecorded),
+    verifiedBytes: Number(completion.verifiedBytes),
+  });
 }
 
 async function posterSlot(request, env) {
@@ -1442,21 +1530,30 @@ async function posterSlot(request, env) {
   const galleryId = requireString(body, 'galleryId');
   const videoId = requireString(body, 'videoId');
   const fileName = requireString(body, 'fileName');
-  const contentType = String(body.contentType || '').trim() || undefined;
+  const contentType = String(body.contentType || '').trim() || 'application/octet-stream';
 
-  if (contentType && !contentType.startsWith('image/')) throw new Error('Poster uploads must be image files.');
+  if (!contentType.startsWith('image/')) throw new Error('Poster uploads must be image files.');
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
-  const allowanceError = await requireUploadAllowance(env, accountId, Number(body.bytesTotal || 0));
+  const bytesTotal = Number(body.bytesTotal || 0);
+  if (!Number.isSafeInteger(bytesTotal) || bytesTotal <= 0) return errorJson('Upload size must be a positive integer.', 422);
+  const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
   if (allowanceError) return allowanceError;
 
   const videos = await supabaseRest(env, `videos?select=id&gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(videoId)}&deleted_at=is.null&limit=1`);
   if (!videos?.[0]) throw new Error('Video not found for this gallery.');
 
-  const key = mediaObjectKey({ accountId, galleryId: gallery.id, targetType: 'poster', targetId: videoId, objectName: 'poster', fileName });
-  const r2 = await createR2PresignedPutUrl(env, { key, contentType });
+  const slot = await createDirectR2UploadSlot(env, {
+    accountId,
+    bytesTotal,
+    contentType,
+    fileName,
+    galleryId: gallery.id,
+    targetId: videoId,
+    targetType: 'poster',
+  });
 
-  return json({ galleryId: gallery.id, r2, videoId });
+  return json({ galleryId: gallery.id, r2: slot.r2, uploadJobId: slot.uploadJobId, videoId });
 }
 
 async function posterComplete(request, env) {
@@ -1464,27 +1561,25 @@ async function posterComplete(request, env) {
   const { accountId } = await requireAccountContext(request, env);
   const galleryId = requireString(body, 'galleryId');
   const videoId = requireString(body, 'videoId');
-  const r2Key = requireString(body, 'r2Key');
-  const bytes = Number(body.bytes || 0);
+  const uploadJobId = requireString(body, 'uploadJobId');
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
-  if (!r2Key.startsWith(`${accountId}/${gallery.id}/films/${videoId}/`)) throw new Error('Poster key does not belong to this video.');
-
-  await supabaseRest(env, `videos?id=eq.${encodeURIComponent(videoId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
-    method: 'PATCH',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({ poster_r2_key: r2Key }),
-  });
-
-  await recordUploadUsageEvent(env, {
+  const completion = await completeVerifiedDirectR2Upload(env, {
     accountId,
-    bytes,
     galleryId: gallery.id,
     targetId: videoId,
-    targetType: 'video',
+    targetType: 'poster',
+    uploadJobId,
   });
+  if (completion.error) return completion.error;
 
-  return json({ ok: true, r2Key });
+  return json({
+    alreadyCompleted: Boolean(completion.alreadyCompleted),
+    ok: true,
+    r2Key: completion.r2Key,
+    usageRecorded: Boolean(completion.usageRecorded),
+    verifiedBytes: Number(completion.verifiedBytes),
+  });
 }
 
 async function posterCaptureFrame(request, env) {
@@ -1520,13 +1615,21 @@ async function posterCaptureFrame(request, env) {
 
   const objectName = `poster-frame-${String(Math.round(seconds * 100)).padStart(1, '0')}-${crypto.randomUUID().slice(0, 8)}`;
   const key = mediaObjectKey({ accountId, galleryId: gallery.id, targetType: 'poster', targetId: videoId, objectName, fileName: 'frame.jpg' });
-  const r2 = await createR2PresignedPutUrl(env, { key, contentType: 'image/jpeg' });
+  const r2 = await createR2PresignedPutUrl(env, { key, contentLength: bytes, contentType: 'image/jpeg' });
   const uploadResponse = await fetch(r2.url, {
     method: 'PUT',
     headers: r2.headers,
     body: frameBuffer,
   });
   if (!uploadResponse.ok) throw new Error(`R2 frame upload failed (${uploadResponse.status}).`);
+  const capturedObject = await headR2Object(env, key);
+  let capturedVerification;
+  try {
+    capturedVerification = verifyDirectR2Object({ bytes_total: bytes, content_type: 'image/jpeg' }, capturedObject);
+  } catch (error) {
+    await deleteR2Object(env, key).catch(() => undefined);
+    throw error;
+  }
 
   await supabaseRest(env, `videos?id=eq.${encodeURIComponent(videoId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
     method: 'PATCH',
@@ -1536,7 +1639,7 @@ async function posterCaptureFrame(request, env) {
 
   await recordUploadUsageEvent(env, {
     accountId,
-    bytes,
+    bytes: capturedVerification.verifiedBytes,
     galleryId: gallery.id,
     targetId: videoId,
     targetType: 'video',

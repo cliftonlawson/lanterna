@@ -558,18 +558,16 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
         if (slot.r2.method !== 'PUT') throw new Error('Photo upload did not return an R2 upload URL.');
         await putFileToR2(file, slot.r2, (bytesUploaded) => setJob(jobId, { bytesUploaded, status: 'uploading' }));
-        await completeUpload({
-          bytes: file.size,
+        const completed = await completeUpload({
           galleryId: activeGallery.id,
-          r2Key: slot.r2.key,
           targetId: target.id,
           targetType: 'photo',
           uploadJobId: slot.uploadJobId,
         });
-        setJob(jobId, { bytesUploaded: file.size, status: 'complete' });
+        setJob(jobId, { bytesUploaded: completed.verifiedBytes, status: 'complete' });
         setGalleries((current) => {
           const updated = current.map((gallery) => gallery.id === activeGallery.id
-            ? updateUploadedMedia(gallery, target.id, 'photo', slot.r2.key, file.size)
+            ? updateUploadedMedia(gallery, target.id, 'photo', completed.r2Key, completed.verifiedBytes)
             : gallery);
           void saveDashboardGalleries(updated, 'upload');
           return updated;
@@ -717,23 +715,22 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       });
 
       await putFileToR2(file, slot.r2, () => undefined);
-      await completeBackgroundUpload({
-        bytes: file.size,
+      const completed = await completeBackgroundUpload({
         galleryId: activeGallery.id,
-        r2Key: slot.r2.key,
+        uploadJobId: slot.uploadJobId,
       });
 
       const updatedGalleries = galleries.map((gallery) => gallery.id === activeGallery.id ? {
         ...gallery,
         design: {
           ...gallery.design,
-          backgroundR2Key: slot.r2.key,
+          backgroundR2Key: completed.r2Key,
           backgroundType: 'image' as const,
         },
       } : gallery);
       setGalleries(updatedGalleries);
       await saveDashboardGalleries(updatedGalleries, 'upload');
-      updateWorkspace({ allowanceUsedGb: Number((workspace.allowanceUsedGb + file.size / 1024 / 1024 / 1024).toFixed(2)) });
+      updateWorkspace({ allowanceUsedGb: workspace.allowanceUsedGb + completed.verifiedBytes / 1_000_000_000 });
       showToast('Background uploaded');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Background upload failed');

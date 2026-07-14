@@ -109,6 +109,7 @@ Done when: a real upload produces a verified `r2_key` master and a ready Stream 
 ### 17. Truthful, idempotent upload accounting
 Reason for this position: generalize accounting only after item 14 defines the final object-completion boundary and provides a real R2 object whose size can be verified.
 At completion, obtain actual object size with R2 `HEAD`, record usage from the verified size rather than client `bytesTotal`, bind upload authorization to the intended object, and make completion idempotent so retries cannot double-count.
+Implementation note: the generalized path covers photos, uploaded posters, and gallery backgrounds with server-owned jobs; captured Stream frames are also HEAD-verified. Exact bytes are retained and converted to decimal GB so small files do not round to zero.
 Done when: a raw client cannot under-report bytes, completion records the provider-verified size, and repeated completion requests produce one usage increment.
 
 ### 18a. Password-gallery sentinel removal

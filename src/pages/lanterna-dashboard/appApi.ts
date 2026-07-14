@@ -134,9 +134,7 @@ export async function createUploadSlot(input: CreateUploadSlotInput) {
 }
 
 type CompleteUploadInput = {
-  bytes: number;
   galleryId: string;
-  r2Key: string;
   targetId: string;
   targetType: 'photo';
   uploadJobId: string;
@@ -145,10 +143,14 @@ type CompleteUploadInput = {
 export async function completeUpload(input: CompleteUploadInput) {
   const targetId = photoDatabaseId(input.targetId);
 
-  return postApi<{ ok: boolean }>('/api/upload/complete', {
-    bytes: input.bytes,
+  return postApi<{
+    alreadyCompleted: boolean;
+    ok: boolean;
+    r2Key: string;
+    usageRecorded: boolean;
+    verifiedBytes: number;
+  }>('/api/upload/complete', {
     galleryId: input.galleryId,
-    r2Key: input.r2Key,
     targetId,
     targetType: input.targetType,
     uploadJobId: input.uploadJobId,
@@ -253,6 +255,7 @@ export async function deleteGalleryMediaRemote(input: {
 type BackgroundSlotResponse = {
   galleryId: string;
   r2: R2PutSlot;
+  uploadJobId: string;
 };
 
 export async function createBackgroundUploadSlot(input: {
@@ -270,14 +273,18 @@ export async function createBackgroundUploadSlot(input: {
 }
 
 export async function completeBackgroundUpload(input: {
-  bytes: number;
   galleryId: string;
-  r2Key: string;
+  uploadJobId: string;
 }) {
-  return postApi<{ ok: boolean; r2Key: string }>('/api/background/complete', {
-    bytes: input.bytes,
+  return postApi<{
+    alreadyCompleted: boolean;
+    ok: boolean;
+    r2Key: string;
+    usageRecorded: boolean;
+    verifiedBytes: number;
+  }>('/api/background/complete', {
     galleryId: input.galleryId,
-    r2Key: input.r2Key,
+    uploadJobId: input.uploadJobId,
   });
 }
 
@@ -298,15 +305,19 @@ export async function createPosterUploadSlot(input: {
 }
 
 export async function completePosterUpload(input: {
-  bytes: number;
   galleryId: string;
-  r2Key: string;
+  uploadJobId: string;
   videoId: string;
 }) {
-  return postApi<{ ok: boolean; r2Key: string }>('/api/poster/complete', {
-    bytes: input.bytes,
+  return postApi<{
+    alreadyCompleted: boolean;
+    ok: boolean;
+    r2Key: string;
+    usageRecorded: boolean;
+    verifiedBytes: number;
+  }>('/api/poster/complete', {
     galleryId: input.galleryId,
-    r2Key: input.r2Key,
+    uploadJobId: input.uploadJobId,
     videoId: videoDatabaseId(input.videoId),
   });
 }

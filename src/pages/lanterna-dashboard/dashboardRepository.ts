@@ -449,6 +449,7 @@ export async function loadUploadJobs() {
       .from('upload_jobs')
       .select('*')
       .eq('account_id', accountId)
+      .in('target_type', ['video', 'photo'])
       .order('created_at', { ascending: false });
 
     if (error) throw error;

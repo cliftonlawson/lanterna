@@ -90,6 +90,8 @@ Same direct-to-R2 multipart pattern, but smaller files, so single-PUT for anythi
 ### Hard rules
 
 - Uploads always go browser-to-Cloudflare directly. Never proxy multi-GB bodies through your application server.
+- Photo, background, and uploaded-poster PUT slots are also represented by server-owned upload jobs. The presigned request binds the expected `Content-Length`; completion reads the issued key from the job, verifies size and content type with R2 `HEAD`, and atomically attaches the object plus one exact-byte usage event. Browser-reported byte counts are progress display only, never accounting truth.
+- Upload allowance uses decimal GB (`1,000,000,000` bytes). `usage_events.bytes` is authoritative; the GB value is a reproducible rollup and retains enough precision for small photos.
 - Every presigned URL is short-lived (minutes) and scoped to exactly one object and operation.
 - The "complete" step is server-authoritative. A client claiming "done" is not done until the backend verifies the object and (for films) processing succeeds.
 
