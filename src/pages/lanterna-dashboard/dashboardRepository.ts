@@ -25,6 +25,8 @@ import {
 type SaveReason = 'autosave' | 'create' | 'delivery' | 'archive' | 'upload' | 'video';
 
 const serverOwnedGalleryFields = new Set([
+  'access_type',
+  'password_hash',
   'status',
   'source_file_window_days',
   'source_file_expires_at',

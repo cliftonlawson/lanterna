@@ -68,6 +68,7 @@ type Props = {
   onBackToGalleries: () => void;
   onDesignChange: (patch: Partial<GalleryDesign>) => void;
   onGalleryChange: (patch: Partial<DashboardGallery>) => void;
+  onGalleryAccessChange: (access: DashboardGallery['access'], password?: string) => Promise<void>;
   onBackgroundUpload: (file: File) => void;
   onOpenUpload: () => void;
   onSelectedPhotosChange: (selected: string[]) => void;
@@ -85,6 +86,7 @@ export function GalleryStudioScreen({
   onBackToGalleries,
   onDesignChange,
   onGalleryChange,
+  onGalleryAccessChange,
   onBackgroundUpload,
   onOpenUpload,
   onSelectedPhotosChange,
@@ -159,7 +161,7 @@ export function GalleryStudioScreen({
           )}
 
           {studioTab === 'settings' && (
-            <SettingsTab activeGallery={activeGallery} workspace={workspace} onGalleryChange={onGalleryChange} />
+            <SettingsTab activeGallery={activeGallery} workspace={workspace} onGalleryAccessChange={onGalleryAccessChange} onGalleryChange={onGalleryChange} />
           )}
 
           {studioTab === 'deliver' && (
@@ -1303,40 +1305,67 @@ function SalonPrint({ feature = false, film, onFilmSelect }: { feature?: boolean
   return <article className={`lg-print ${film.paidUnlockEnabled ? 'is-paid' : ''}`} {...filmInteractionProps(film, onFilmSelect)}><i className="still" style={filmStyle(film)}><PaidFilmBadge compact film={film} />{feature && <b>Feature</b>}<span>{film.title}</span></i></article>;
 }
 
-function bytesToHex(buffer: ArrayBuffer) {
-  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function randomSalt() {
-  const bytes = new Uint8Array(16);
-  window.crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function passwordHash(password: string) {
-  const salt = randomSalt();
-  const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}:${password}`));
-  return `sha256:${salt}:${bytesToHex(digest)}`;
-}
-
 function SettingsTab({
   activeGallery,
   workspace,
+  onGalleryAccessChange,
   onGalleryChange,
 }: {
   activeGallery: DashboardGallery;
   workspace: WorkspaceAccount;
+  onGalleryAccessChange: (access: DashboardGallery['access'], password?: string) => Promise<void>;
   onGalleryChange: (patch: Partial<DashboardGallery>) => void;
 }) {
   const accessOptions: DashboardGallery['access'][] = ['Public', 'Password', 'Private'];
   const customDomain = displayDomain(workspace.customDomain ?? 'deliver.lanterna.studio');
-  const setPassword = async (value: string) => {
-    const password = value.trim();
-    if (!password) {
-      onGalleryChange({ passwordHash: null, passwordSet: false });
+  const [pendingAccess, setPendingAccess] = useState<DashboardGallery['access'] | null>(null);
+  const [password, setPassword] = useState('');
+  const [accessError, setAccessError] = useState('');
+  const [savingAccess, setSavingAccess] = useState(false);
+  const displayedAccess = pendingAccess ?? activeGallery.access;
+
+  useEffect(() => {
+    setPendingAccess(null);
+    setPassword('');
+    setAccessError('');
+  }, [activeGallery.id]);
+
+  const chooseAccess = async (access: DashboardGallery['access']) => {
+    setAccessError('');
+    if (access === activeGallery.access && !pendingAccess) return;
+    if (access === 'Password') {
+      setPendingAccess('Password');
       return;
     }
-    onGalleryChange({ passwordHash: await passwordHash(password), passwordSet: true });
+
+    setSavingAccess(true);
+    try {
+      await onGalleryAccessChange(access);
+      setPendingAccess(null);
+      setPassword('');
+    } catch (error) {
+      setAccessError(error instanceof Error ? error.message : 'Gallery access update failed.');
+    } finally {
+      setSavingAccess(false);
+    }
+  };
+
+  const savePassword = async () => {
+    if (!password.trim()) {
+      setAccessError('Set a gallery password.');
+      return;
+    }
+    setSavingAccess(true);
+    setAccessError('');
+    try {
+      await onGalleryAccessChange('Password', password);
+      setPendingAccess(null);
+      setPassword('');
+    } catch (error) {
+      setAccessError(error instanceof Error ? error.message : 'Gallery password update failed.');
+    } finally {
+      setSavingAccess(false);
+    }
   };
 
   return (
@@ -1351,20 +1380,27 @@ function SettingsTab({
           {accessOptions.map((item) => (
             <button
               key={item}
-              className={activeGallery.access === item ? 'on' : ''}
-              onClick={() => onGalleryChange({ access: item, passwordHash: item === 'Password' ? activeGallery.passwordHash : null, passwordSet: item === 'Password' ? activeGallery.passwordSet : false })}
+              className={displayedAccess === item ? 'on' : ''}
+              disabled={savingAccess}
+              onClick={() => void chooseAccess(item)}
             >
               {item}
             </button>
           ))}
         </div>
-        {activeGallery.access === 'Password' && (
+        {displayedAccess === 'Password' && (
           <label>
             Gallery password
-            <input type="password" placeholder={activeGallery.passwordSet ? 'Password is set' : 'Set a password'} onChange={(event) => void setPassword(event.target.value)} />
+            <input autoComplete="new-password" disabled={savingAccess} type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
           </label>
         )}
-        {activeGallery.access === 'Password' && <div className={activeGallery.passwordSet ? 'save-state' : 'save-state warn'}>{activeGallery.passwordSet ? <Check size={15} /> : <Lock size={15} />}{activeGallery.passwordSet ? 'Password ready' : 'Password required'}</div>}
+        {displayedAccess === 'Password' && (
+          <button className="secondary" disabled={savingAccess || !password.trim()} onClick={() => void savePassword()}>
+            <Lock size={15} /> {savingAccess ? 'Saving password' : activeGallery.passwordSet && !pendingAccess ? 'Replace password' : 'Save password'}
+          </button>
+        )}
+        {displayedAccess === 'Password' && <div className={activeGallery.passwordSet && !pendingAccess ? 'save-state' : 'save-state warn'}>{activeGallery.passwordSet && !pendingAccess ? <Check size={15} /> : <Lock size={15} />}{activeGallery.passwordSet && !pendingAccess ? 'Password is set' : 'Password required'}</div>}
+        {accessError && <div className="modal-form-error" role="alert">{accessError}</div>}
         <Toggle title="Allow downloads" checked={activeGallery.allowDownloads} onChange={(allowDownloads) => onGalleryChange({ allowDownloads })} />
         <Toggle title="Auto-expire gallery" checked={activeGallery.autoExpire} onChange={(autoExpire) => onGalleryChange({ autoExpire })} />
       </Panel>

@@ -19,6 +19,7 @@ import { empty, errorJson, json, readJson, routePath, safeSlug } from './http.js
 import { buildDeliveryEmailContent, sendTransactionalEmail } from './transactionalEmail.js';
 import { createPaidUnlockCheckout, paidUnlockSession, recoverPaidUnlock, stripeWebhook } from './stripeCheckout.js';
 import { resolveGalleryDownloadPermission, resolveVideoDownloadPermission } from './downloadPermissions.js';
+import { hashGalleryPassword, supportedGalleryPasswordHash, verifyGalleryPassword } from './galleryPassword.js';
 import { startStreamCopyFromMaster, StreamCopyStartError } from './videoIngestion.js';
 import { bytesToGb, UploadVerificationError, verifyDirectR2Object } from './uploadAccounting.js';
 
@@ -433,9 +434,11 @@ async function createGallery(request, env) {
   if (!GALLERY_ACCESS_TYPES.has(accessType)) throw new Error('Choose a valid gallery access type.');
   if (!GALLERY_PROJECT_TYPES.has(projectType)) throw new Error('Choose a valid project type.');
   if (eventDate && !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) throw new Error('Event date must use YYYY-MM-DD.');
-  if (accessType === 'password' && body.passwordConfigured !== true) {
+  const password = String(body.password || '').trim();
+  if (accessType === 'password' && !password) {
     return errorJson('Set a gallery password before creating this gallery.', 422, { code: 'password_required' });
   }
+  const passwordHash = accessType === 'password' ? await hashGalleryPassword(password) : null;
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const galleryId = crypto.randomUUID();
@@ -452,7 +455,7 @@ async function createGallery(request, env) {
           event_date: eventDate,
           id: galleryId,
           name,
-          password_hash: accessType === 'password' ? `ui-configured:${slug}` : null,
+          password_hash: passwordHash,
           project_type: projectType,
           slug,
         }),
@@ -497,6 +500,39 @@ async function createGallery(request, env) {
   }
 
   return errorJson('A unique gallery link could not be reserved. Try again.', 409, { code: 'slug_conflict' });
+}
+
+async function setGalleryAccess(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const accessType = requireString(body, 'accessType');
+  if (!GALLERY_ACCESS_TYPES.has(accessType)) throw new Error('Choose a valid gallery access type.');
+
+  await assertGalleryMembership(env, accountId, galleryId);
+  const passwordHash = accessType === 'password'
+    ? await hashGalleryPassword(String(body.password || ''))
+    : null;
+  const rows = await supabaseRest(
+    env,
+    `galleries?select=id,access_type,password_hash&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(galleryId)}&deleted_at=is.null`,
+    {
+      body: JSON.stringify({ access_type: accessType, password_hash: passwordHash }),
+      headers: { prefer: 'return=representation' },
+      method: 'PATCH',
+    },
+  );
+  const gallery = rows?.[0];
+  if (!gallery) return errorJson('Gallery not found for this account.', 404);
+
+  return json({
+    gallery: {
+      accessType: gallery.access_type,
+      id: gallery.id,
+      passwordSet: gallery.access_type === 'password' && Boolean(gallery.password_hash),
+    },
+    ok: true,
+  });
 }
 
 async function setGalleryArchived(request, env) {
@@ -1713,31 +1749,16 @@ async function streamPlayback(request, env) {
   return json({ playback });
 }
 
-function hexFromBuffer(buffer) {
-  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function sha256Hex(value) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return hexFromBuffer(digest);
-}
-
 async function passwordMatches(gallery, password) {
   const stored = String(gallery.password_hash || '');
   if (!stored) return { error: 'This gallery needs a password reset before it can be unlocked.', ok: false };
-  if (stored.startsWith('ui-configured:')) {
+  if (!supportedGalleryPasswordHash(stored)) {
     return {
       error: 'This gallery password was configured before unlock was wired. Reset the password in gallery settings.',
       ok: false,
     };
   }
-  if (stored.startsWith('plain:')) return { ok: stored.slice(6) === password };
-  if (stored.startsWith('sha256:')) {
-    const [, salt, hash] = stored.split(':');
-    if (!salt || !hash) return { error: 'This gallery needs a password reset before it can be unlocked.', ok: false };
-    return { ok: await sha256Hex(`${salt}:${password}`) === hash };
-  }
-  return { ok: stored === password };
+  return { ok: await verifyGalleryPassword(password, stored) };
 }
 
 async function publicGalleryPayload(env, gallery) {
@@ -1956,6 +1977,7 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'media/urls') return await mediaUrls(request, env);
     if (request.method === 'POST' && path === 'stream/playback') return await streamPlayback(request, env);
     if (request.method === 'POST' && path === 'gallery/create') return await createGallery(request, env);
+    if (request.method === 'POST' && path === 'gallery/access') return await setGalleryAccess(request, env);
     if (request.method === 'POST' && path === 'gallery/publish') return await publishGallery(request, env);
     if (request.method === 'POST' && path === 'gallery/archive') return await setGalleryArchived(request, env);
     if (request.method === 'POST' && path === 'gallery/delete') return await deleteGallery(request, env);

@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "smoke:gallery": "node scripts/smoke-gallery.mjs",
+    "test:gallery-password": "node scripts/test-gallery-password.mjs",
     "test:upload-accounting": "node scripts/test-upload-accounting.mjs",
     "test:video-ingestion": "node scripts/test-dual-video-ingestion.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"

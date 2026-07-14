@@ -11,6 +11,7 @@ import {
   pauseVideoMasterUpload,
   processUploadedVideos,
   putFileToR2,
+  setGalleryAccessRemote,
   startVideoPlaybackPreparation,
   uploadVideoMasterMultipart,
 } from './lanterna-dashboard/appApi';
@@ -290,8 +291,8 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     const name = String(data.get('name') || '').trim() || 'Untitled gallery';
     const project = String(data.get('project') || 'Weddings') as DashboardGallery['project'];
     const access = String(data.get('access') || 'Private') as DashboardGallery['access'];
-    const passwordConfigured = Boolean(String(data.get('password') || '').trim());
-    if (access === 'Password' && !passwordConfigured) {
+    const password = String(data.get('password') || '').trim();
+    if (access === 'Password' && !password) {
       setCreateGalleryError('Set a password before creating this gallery.');
       return;
     }
@@ -306,7 +307,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         clientName: String(data.get('client') || '').trim() || name,
         eventDate: String(data.get('date') || '').trim() || null,
         name,
-        passwordConfigured,
+        password: access === 'Password' ? password : null,
         projectType: project === 'Engagements' ? 'engagement' : project === 'Portraits' ? 'portrait' : 'wedding',
       });
       const persisted = result.gallery;
@@ -349,6 +350,17 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       createGalleryRequestRef.current = false;
       setCreatingGallery(false);
     }
+  };
+
+  const updateGalleryAccess = async (access: DashboardGallery['access'], password?: string) => {
+    const accessType = access === 'Public' ? 'public' : access === 'Password' ? 'password' : 'private';
+    const result = await setGalleryAccessRemote(activeGallery.id, accessType, password);
+    setGalleries((current) => current.map((gallery) => gallery.id === activeGallery.id ? {
+      ...gallery,
+      access,
+      passwordHash: null,
+      passwordSet: result.gallery.passwordSet,
+    } : gallery));
   };
 
   const sendDelivery = async () => {
@@ -808,6 +820,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           onBackToGalleries={() => setView('galleries')}
           onDesignChange={updateActiveDesign}
           onGalleryChange={updateActiveGallery}
+          onGalleryAccessChange={updateGalleryAccess}
           onBackgroundUpload={uploadBackgroundImage}
           onOpenUpload={() => setView('upload')}
           onSelectedPhotosChange={setSelectedPhotos}

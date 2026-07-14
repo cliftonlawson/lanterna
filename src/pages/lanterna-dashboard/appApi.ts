@@ -32,7 +32,7 @@ export async function createGalleryRemote(input: {
   clientName: string;
   eventDate: string | null;
   name: string;
-  passwordConfigured: boolean;
+  password: string | null;
   projectType: 'wedding' | 'engagement' | 'portrait';
 }) {
   return postApi<{
@@ -49,6 +49,21 @@ export async function createGalleryRemote(input: {
     };
     ok: boolean;
   }>('/api/gallery/create', input);
+}
+
+export async function setGalleryAccessRemote(
+  galleryId: string,
+  accessType: 'public' | 'password' | 'private',
+  password?: string,
+) {
+  return postApi<{
+    gallery: {
+      accessType: 'public' | 'password' | 'private';
+      id: string;
+      passwordSet: boolean;
+    };
+    ok: boolean;
+  }>('/api/gallery/access', { accessType, galleryId, password });
 }
 
 export async function publishGallery(galleryId: string) {
