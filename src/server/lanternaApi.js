@@ -1,17 +1,30 @@
 import { createR2PresignedGetUrl, createR2PresignedPutUrl, mediaObjectKey } from './r2Signing.js';
-import { createStreamDirectUpload, createStreamPlayback, createStreamTusUpload, getStreamVideo } from './cloudflareStream.js';
+import { deleteStreamVideo, createStreamPlayback, getStreamVideo, streamAllowedOrigins } from './cloudflareStream.js';
+import {
+  abortR2MultipartUpload,
+  completeR2MultipartUpload,
+  createR2MultipartUpload,
+  createR2UploadPartUrl,
+  headR2Object,
+  listR2MultipartParts,
+  multipartPartCount,
+  multipartPartSize,
+  r2MultipartNotFound,
+  validateMultipartParts,
+} from './r2Multipart.js';
 import { publicGalleryAccessError } from './galleryAccess.js';
 import { accountForUser, assertGalleryMembership, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
 import { empty, errorJson, json, readJson, routePath, safeSlug } from './http.js';
 import { buildDeliveryEmailContent, sendTransactionalEmail } from './transactionalEmail.js';
 import { createPaidUnlockCheckout, paidUnlockSession, recoverPaidUnlock, stripeWebhook } from './stripeCheckout.js';
 import { resolveGalleryDownloadPermission, resolveVideoDownloadPermission } from './downloadPermissions.js';
+import { startStreamCopyFromMaster, StreamCopyStartError } from './videoIngestion.js';
 
 const uploadTargetTypes = new Set(['video', 'photo']);
 const PUBLIC_STREAM_PLAYBACK_TTL_SECONDS = 21600;
-const STREAM_BASIC_POST_MAX_BYTES = 200 * 1024 * 1024;
 const DEFAULT_UPLOAD_ALLOWANCE_GB = 50;
 const DEFAULT_UPLOAD_JOB_STALE_MINUTES = 180;
+const MAX_STREAM_SOURCE_BYTES = 30 * 1024 * 1024 * 1024;
 const STREAM_FAILED_STATES = new Set(['error', 'failed', 'failure', 'cancelled', 'canceled']);
 const STREAM_TERMINAL_ERROR_PATTERN = /not found|does not exist|invalid/i;
 const GALLERY_ACCESS_TYPES = new Set(['public', 'password', 'private']);
@@ -32,10 +45,6 @@ async function vendorBrandingForAccount(env, accountId) {
     { headers: { accept: 'application/json' } },
   );
   return rows?.[0] ?? null;
-}
-
-function streamDirectUploadsEnabled(env) {
-  return String(env.CLOUDFLARE_STREAM_DIRECT_UPLOADS_ENABLED || '').toLowerCase() === 'true';
 }
 
 function requireString(input, key) {
@@ -107,7 +116,7 @@ async function accountUsage(env, accountId) {
 async function activeUploadReservationGb(env, accountId) {
   const rows = await supabaseRest(
     env,
-    `upload_jobs?select=bytes_total&account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading)`,
+    `upload_jobs?select=bytes_total&account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading,paused)`,
     { headers: { accept: 'application/json' } },
   );
 
@@ -121,14 +130,14 @@ async function expireStaleUploadJobs(env, accountId) {
   const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString();
   const rows = await supabaseRest(
     env,
-    `upload_jobs?select=id&account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading)&updated_at=lt.${encodeURIComponent(cutoff)}`,
+    `upload_jobs?select=id&account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading,paused)&updated_at=lt.${encodeURIComponent(cutoff)}`,
     { headers: { accept: 'application/json' } },
   );
   if (!rows?.length) return 0;
 
   await supabaseRest(
     env,
-    `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading)&updated_at=lt.${encodeURIComponent(cutoff)}`,
+    `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&status=in.(pending,uploading,paused)&updated_at=lt.${encodeURIComponent(cutoff)}`,
     {
       body: JSON.stringify({ status: 'errored' }),
       headers: { prefer: 'return=minimal' },
@@ -220,6 +229,47 @@ async function uploadJobForTarget(env, { accountId, galleryId, targetId, targetT
     throw new Error('Upload job does not match this upload target.');
   }
   return job;
+}
+
+async function videoUploadJob(env, { accountId, galleryId, uploadJobId }) {
+  if (!uploadJobId) throw new Error('uploadJobId is required.');
+  const rows = await supabaseRest(
+    env,
+    `upload_jobs?select=id,account_id,gallery_id,target_id,target_type,status,bytes_total,bytes_uploaded,multipart_upload_id,multipart_part_size,r2_key,content_type,file_name,upload_phase,is_replacement,verified_bytes,master_verified_at,stream_upload_id,stream_source_expires_at,error_code,error_message&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(galleryId)}&id=eq.${encodeURIComponent(uploadJobId)}&target_type=eq.video&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  const job = rows?.[0];
+  if (!job) throw new Error('Video upload job not found.');
+  return job;
+}
+
+async function callUploadRpc(env, name, body) {
+  return supabaseRest(env, `rpc/${name}`, {
+    method: 'POST',
+    headers: { prefer: 'return=representation' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function markVideoCopyFailed(env, { accountId, galleryId, job, message }) {
+  await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(job.id)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+    method: 'PATCH',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({
+      error_code: 'stream_copy_failed',
+      error_message: String(message || 'Cloudflare Stream copy failed.').slice(0, 500),
+      status: 'errored',
+      upload_phase: 'copy_failed',
+    }),
+  });
+
+  if (!job.is_replacement) {
+    await supabaseRest(env, `videos?id=eq.${encodeURIComponent(job.target_id)}&gallery_id=eq.${encodeURIComponent(galleryId)}`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({ processing_status: 'errored', stream_ready: false }),
+    });
+  }
 }
 
 function streamStatusErrorIsTerminal(error) {
@@ -415,25 +465,126 @@ async function uploadSlot(request, env) {
   }
 
   const bytesTotal = Number(body.bytesTotal || 0);
+  if (!Number.isSafeInteger(bytesTotal) || bytesTotal <= 0) return errorJson('Upload size must be a positive integer.', 422);
+  if (targetType === 'video' && bytesTotal > MAX_STREAM_SOURCE_BYTES) {
+    return errorJson('Cloudflare Stream accepts video masters up to 30 GB.', 422);
+  }
+  const contentType = String(body.contentType || '').trim() || 'application/octet-stream';
+
+  if (targetType === 'video') {
+    if (!contentType.startsWith('video/')) return errorJson('Video uploads require a video content type.', 422);
+    const videoRows = await supabaseRest(
+      env,
+      `videos?select=id,r2_key,web_copy_r2_key,stream_uid,stream_ready,processing_status&gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(targetId)}&deleted_at=is.null&limit=1`,
+      { headers: { accept: 'application/json' } },
+    );
+    const targetVideo = videoRows?.[0];
+    if (!targetVideo) return errorJson('Video upload target no longer exists.', 409);
+    const isReplacement = Boolean(targetVideo.r2_key || targetVideo.web_copy_r2_key || targetVideo.stream_uid);
+
+    const resumeUploadJobId = String(body.resumeUploadJobId || '').trim();
+    if (resumeUploadJobId) {
+      const existing = await videoUploadJob(env, { accountId, galleryId: gallery.id, uploadJobId: resumeUploadJobId });
+      if (existing.target_id !== targetId
+        || Number(existing.bytes_total) !== bytesTotal
+        || existing.file_name !== fileName
+        || String(existing.content_type || '').toLowerCase() !== contentType.toLowerCase()
+        || !existing.multipart_upload_id
+        || !existing.r2_key
+      ) {
+        return errorJson('Selected file does not match this resumable upload.', 409);
+      }
+      if (!['uploading_master', 'master_secured', 'copy_failed'].includes(existing.upload_phase)) {
+        return errorJson('This video upload cannot be resumed from its current state.', 409);
+      }
+      if (existing.status === 'errored' && existing.upload_phase === 'uploading_master') {
+        const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
+        if (allowanceError) return allowanceError;
+      }
+
+      return json({
+        galleryId,
+        r2: {
+          key: existing.r2_key,
+          method: 'MULTIPART',
+          partSize: Number(existing.multipart_part_size),
+          provider: 'r2',
+        },
+        resumed: true,
+        stream: null,
+        targetId,
+        targetType,
+        uploadJobId: existing.id,
+        uploadPhase: existing.upload_phase,
+      });
+    }
+
+    const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
+    if (allowanceError) return allowanceError;
+
+    const uploadJobId = crypto.randomUUID();
+    const key = mediaObjectKey({
+      accountId,
+      galleryId,
+      targetType,
+      targetId,
+      fileName,
+      objectName: `master-${uploadJobId}`,
+    });
+    const partSize = multipartPartSize(env, bytesTotal);
+    const multipart = await createR2MultipartUpload(env, { contentType, key });
+
+    try {
+      await supabaseRest(env, 'upload_jobs', {
+        method: 'POST',
+        headers: { prefer: 'return=minimal' },
+        body: JSON.stringify({
+          account_id: accountId,
+          bytes_total: bytesTotal,
+          bytes_uploaded: 0,
+          content_type: contentType,
+          file_name: fileName,
+          gallery_id: gallery.id,
+          id: uploadJobId,
+          is_replacement: isReplacement,
+          multipart_part_size: partSize,
+          multipart_upload_id: multipart.uploadId,
+          r2_key: key,
+          status: 'pending',
+          target_id: targetId,
+          target_type: targetType,
+          upload_phase: 'uploading_master',
+        }),
+      });
+    } catch (error) {
+      await abortR2MultipartUpload(env, { key, uploadId: multipart.uploadId }).catch(() => undefined);
+      throw error;
+    }
+
+    return json({
+      galleryId,
+      r2: {
+        key,
+        method: 'MULTIPART',
+        partSize,
+        provider: 'r2',
+      },
+      resumed: false,
+      isReplacement,
+      stream: null,
+      targetId,
+      targetType,
+      uploadJobId,
+      uploadPhase: 'uploading_master',
+    });
+  }
+
   const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
   if (allowanceError) return allowanceError;
 
-  const contentType = String(body.contentType || '').trim() || undefined;
   const key = mediaObjectKey({ accountId, galleryId, targetType, targetId, fileName });
   const r2 = await createR2PresignedPutUrl(env, { key, contentType });
   const uploadJobId = crypto.randomUUID();
-
-  let stream = null;
-  if (targetType === 'video' && streamDirectUploadsEnabled(env) && env.CLOUDFLARE_STREAM_API_TOKEN && env.CLOUDFLARE_ACCOUNT_ID) {
-    try {
-      stream = bytesTotal > STREAM_BASIC_POST_MAX_BYTES
-        ? await createStreamTusUpload(env, { accountId, bytesTotal, fileName, galleryId, targetId })
-        : await createStreamDirectUpload(env, { accountId, galleryId, targetId });
-    } catch (error) {
-      console.warn('Cloudflare Stream direct upload unavailable; falling back to R2 upload slot', error);
-      stream = null;
-    }
-  }
 
   await supabaseRest(env, 'upload_jobs', {
     method: 'POST',
@@ -445,20 +596,267 @@ async function uploadSlot(request, env) {
       gallery_id: gallery.id,
       id: uploadJobId,
       status: 'pending',
-      stream_upload_id: stream?.streamUploadId ?? null,
       target_id: targetId,
       target_type: targetType,
     }),
   });
 
-  return json({
-    galleryId,
-    r2,
-    stream,
-    targetId,
-    targetType,
-    uploadJobId,
+  return json({ galleryId, r2, stream: null, targetId, targetType, uploadJobId });
+}
+
+async function videoMultipartPartUrl(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const uploadJobId = requireString(body, 'uploadJobId');
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const job = await videoUploadJob(env, { accountId, galleryId: gallery.id, uploadJobId });
+  if (job.upload_phase !== 'uploading_master' || !job.multipart_upload_id || !job.r2_key) {
+    return errorJson('Video master is not accepting multipart parts.', 409);
+  }
+
+  const partNumber = Number(body.partNumber);
+  const partCount = multipartPartCount(Number(job.bytes_total), Number(job.multipart_part_size));
+  if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > partCount) {
+    return errorJson('Multipart part number is outside this upload.', 422);
+  }
+
+  const part = await createR2UploadPartUrl(env, {
+    key: job.r2_key,
+    partNumber,
+    uploadId: job.multipart_upload_id,
   });
+
+  if (job.status !== 'uploading') {
+    await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(job.id)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({ status: 'uploading' }),
+    });
+  }
+
+  return json({ ok: true, part, uploadJobId });
+}
+
+async function videoMultipartStatus(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const uploadJobId = requireString(body, 'uploadJobId');
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const job = await videoUploadJob(env, { accountId, galleryId: gallery.id, uploadJobId });
+
+  if (job.master_verified_at) {
+    return json({
+      bytesUploaded: Number(job.verified_bytes || job.bytes_total),
+      objectComplete: true,
+      ok: true,
+      parts: [],
+      uploadJobId,
+      uploadPhase: job.upload_phase,
+    });
+  }
+  if (!job.multipart_upload_id || !job.r2_key) throw new Error('Video multipart session is missing.');
+
+  const completedObject = await headR2Object(env, job.r2_key);
+  if (completedObject.exists) {
+    return json({
+      bytesUploaded: Number(completedObject.bytes || 0),
+      objectComplete: true,
+      ok: true,
+      parts: [],
+      uploadJobId,
+      uploadPhase: job.upload_phase,
+    });
+  }
+
+  let parts;
+  try {
+    parts = await listR2MultipartParts(env, { key: job.r2_key, uploadId: job.multipart_upload_id });
+  } catch (error) {
+    if (r2MultipartNotFound(error)) return errorJson('R2 multipart session expired. Start this upload again.', 410);
+    throw error;
+  }
+  const bytesUploaded = parts.reduce((sum, part) => sum + Number(part.size || 0), 0);
+
+  await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(job.id)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+    method: 'PATCH',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({ bytes_uploaded: bytesUploaded }),
+  });
+
+  return json({
+    bytesUploaded,
+    objectComplete: false,
+    ok: true,
+    partSize: Number(job.multipart_part_size),
+    parts: parts.map((part) => ({ partNumber: part.partNumber, size: part.size })),
+    uploadJobId,
+    uploadPhase: job.upload_phase,
+  });
+}
+
+async function pauseVideoMasterUpload(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const uploadJobId = requireString(body, 'uploadJobId');
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const job = await videoUploadJob(env, { accountId, galleryId: gallery.id, uploadJobId });
+  if (job.upload_phase !== 'uploading_master') {
+    return errorJson('Only an active master upload can be paused.', 409);
+  }
+
+  await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(job.id)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+    method: 'PATCH',
+    headers: { prefer: 'return=minimal' },
+    body: JSON.stringify({ status: 'paused' }),
+  });
+
+  return json({ ok: true, uploadJobId, uploadPhase: job.upload_phase });
+}
+
+async function completeVideoMaster(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const uploadJobId = requireString(body, 'uploadJobId');
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const job = await videoUploadJob(env, { accountId, galleryId: gallery.id, uploadJobId });
+  if (!job.multipart_upload_id || !job.r2_key) throw new Error('Video multipart session is missing.');
+
+  let object = await headR2Object(env, job.r2_key);
+  if (!object.exists) {
+    let parts;
+    try {
+      parts = await listR2MultipartParts(env, { key: job.r2_key, uploadId: job.multipart_upload_id });
+    } catch (error) {
+      if (r2MultipartNotFound(error)) return errorJson('R2 multipart session expired before completion.', 410);
+      throw error;
+    }
+    const verifiedParts = validateMultipartParts(parts, Number(job.bytes_total), Number(job.multipart_part_size));
+    try {
+      await completeR2MultipartUpload(env, {
+        key: job.r2_key,
+        parts: verifiedParts,
+        uploadId: job.multipart_upload_id,
+      });
+    } catch (error) {
+      if (!r2MultipartNotFound(error)) throw error;
+    }
+    object = await headR2Object(env, job.r2_key);
+  }
+
+  const verifiedBytes = Number(object.bytes || 0);
+  const verifiedContentType = String(object.contentType || '').toLowerCase();
+  if (!object.exists || verifiedBytes !== Number(job.bytes_total)) {
+    return errorJson('R2 master verification failed: uploaded byte size does not match the reserved file.', 409, {
+      code: 'master_size_mismatch',
+      expectedBytes: Number(job.bytes_total),
+      verifiedBytes,
+    });
+  }
+  if (String(job.content_type || '').toLowerCase() !== verifiedContentType) {
+    return errorJson('R2 master verification failed: content type does not match the upload slot.', 409, {
+      code: 'master_content_type_mismatch',
+    });
+  }
+
+  const result = await callUploadRpc(env, 'secure_video_master_upload', {
+    p_account_id: accountId,
+    p_content_type: object.contentType,
+    p_gallery_id: gallery.id,
+    p_r2_key: job.r2_key,
+    p_upload_job_id: job.id,
+    p_verified_bytes: verifiedBytes,
+    p_video_id: job.target_id,
+  });
+
+  return json({
+    alreadyCompleted: Boolean(result?.alreadyCompleted),
+    isReplacement: Boolean(result?.isReplacement),
+    ok: true,
+    r2Key: result?.r2Key ?? job.r2_key,
+    uploadJobId: job.id,
+    uploadPhase: 'master_secured',
+    usageRecorded: Boolean(result?.usageRecorded),
+    verifiedBytes: Number(result?.verifiedBytes ?? verifiedBytes),
+  });
+}
+
+async function startVideoPlaybackPreparation(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const uploadJobId = requireString(body, 'uploadJobId');
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const claim = await callUploadRpc(env, 'claim_video_stream_copy', {
+    p_account_id: accountId,
+    p_gallery_id: gallery.id,
+    p_upload_job_id: uploadJobId,
+  });
+
+  if (claim?.alreadyReady || claim?.alreadyStarted) {
+    return json({
+      alreadyStarted: true,
+      ok: true,
+      streamUid: claim.streamUid,
+      uploadJobId,
+      uploadPhase: claim.alreadyReady ? 'ready' : 'preparing_playback',
+    });
+  }
+  if (claim?.inProgress) {
+    return errorJson('Playback preparation is already starting. Try again in a moment.', 409, { code: 'stream_copy_in_progress' });
+  }
+
+  const job = await videoUploadJob(env, { accountId, galleryId: gallery.id, uploadJobId });
+  if (claim?.previousStreamUid) {
+    await deleteStreamVideo(env, claim.previousStreamUid).catch(() => undefined);
+  }
+
+  try {
+    const started = await startStreamCopyFromMaster({
+      env,
+      job: {
+        accountId,
+        fileName: job.file_name || 'video',
+        galleryId: gallery.id,
+        r2Key: job.r2_key,
+        uploadJobId: job.id,
+        videoId: job.target_id,
+      },
+      onAccepted: async ({ sourceExpiresAt, streamUid }) => {
+        await callUploadRpc(env, 'record_video_stream_copy', {
+          p_account_id: accountId,
+          p_gallery_id: gallery.id,
+          p_source_expires_at: sourceExpiresAt,
+          p_stream_uid: streamUid,
+          p_upload_job_id: job.id,
+        });
+      },
+      onFailure: async (message) => markVideoCopyFailed(env, {
+        accountId,
+        galleryId: gallery.id,
+        job,
+        message,
+      }),
+    });
+
+    return json({
+      ok: true,
+      sourceExpiresAt: started.sourceExpiresAt,
+      streamUid: started.streamUid,
+      uploadJobId: job.id,
+      uploadPhase: 'preparing_playback',
+    });
+  } catch (error) {
+    if (error instanceof StreamCopyStartError) {
+      return errorJson('Master secured, but playback preparation failed. Retry without uploading again.', 502, {
+        code: 'stream_copy_failed',
+      });
+    }
+    throw error;
+  }
 }
 
 async function uploadComplete(request, env) {
@@ -467,10 +865,13 @@ async function uploadComplete(request, env) {
   const galleryId = requireString(body, 'galleryId');
   const targetId = requireString(body, 'targetId');
   const targetType = requireString(body, 'targetType');
-  const streamUid = String(body.streamUid || '').trim() || null;
-  const r2Key = targetType === 'video' && streamUid
-    ? String(body.r2Key || '').trim() || null
-    : requireString(body, 'r2Key');
+  if (targetType === 'video') {
+    return errorJson('Video masters must use the verified multipart completion route.', 409, {
+      code: 'video_multipart_completion_required',
+    });
+  }
+  if (targetType !== 'photo') throw new Error('targetType must be photo.');
+  const r2Key = requireString(body, 'r2Key');
   const bytes = Number(body.bytes || 0);
 
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
@@ -478,7 +879,7 @@ async function uploadComplete(request, env) {
     await markUploadJobErrored(env, accountId, body.uploadJobId);
     return errorJson('Upload target no longer exists. Reload and retry the upload.', 409);
   }
-  const uploadJob = await uploadJobForTarget(env, {
+  await uploadJobForTarget(env, {
     accountId,
     galleryId: gallery.id,
     targetId,
@@ -486,91 +887,18 @@ async function uploadComplete(request, env) {
     uploadJobId: body.uploadJobId,
   });
   requireMediaKeyPrefix(r2Key, { accountId, galleryId: gallery.id, targetId, targetType });
-  if (streamUid && uploadJob.stream_upload_id !== streamUid) {
-    await markUploadJobErrored(env, accountId, body.uploadJobId);
-    return errorJson('Stream upload does not match this upload job.', 409);
-  }
 
-  if (targetType === 'video' && body.stageReplacement === true && streamUid) {
-    if (body.uploadJobId) {
-      await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(body.uploadJobId)}&account_id=eq.${encodeURIComponent(accountId)}`, {
-        method: 'PATCH',
-        headers: { prefer: 'return=minimal' },
-        body: JSON.stringify({ bytes_uploaded: bytes, status: 'processing' }),
-      });
-    }
-
-    await supabaseRest(env, 'media_tasks', {
-      method: 'POST',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({
-        account_id: accountId,
-        gallery_id: gallery.id,
-        id: crypto.randomUUID(),
-        task_type: 'generate_web_copy',
-        payload: {
-          replacement: true,
-          r2_bytes: bytes,
-          r2_key: r2Key,
-          stream_uid: streamUid,
-          target_id: targetId,
-          target_type: targetType,
-          upload_job_id: body.uploadJobId || null,
-        },
-        status: 'pending',
-        video_id: targetId,
-      }),
-    });
-
-    await recordUploadUsageEvent(env, {
-      accountId,
-      bytes,
-      galleryId: gallery.id,
-      targetId,
-      targetType,
-    });
-
-    return json({ ok: true, staged: true });
-  }
-
-  const mediaUpdate = targetType === 'photo'
-    ? { r2_key: r2Key, r2_bytes: bytes, processing_status: 'ready' }
-    : {
-      r2_key: r2Key,
-      r2_bytes: bytes,
-      processing_status: 'processing',
-      stream_uid: streamUid,
-      stream_ready: false,
-    };
-  const table = targetType === 'photo' ? 'photos' : 'videos';
-
-  await supabaseRest(env, `${table}?id=eq.${encodeURIComponent(targetId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
+  await supabaseRest(env, `photos?id=eq.${encodeURIComponent(targetId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
     method: 'PATCH',
     headers: { prefer: 'return=minimal' },
-    body: JSON.stringify(mediaUpdate),
+    body: JSON.stringify({ r2_key: r2Key, r2_bytes: bytes, processing_status: 'ready' }),
   });
 
   if (body.uploadJobId) {
     await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(body.uploadJobId)}&account_id=eq.${encodeURIComponent(accountId)}`, {
       method: 'PATCH',
       headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({ bytes_uploaded: bytes, status: targetType === 'photo' ? 'complete' : 'processing' }),
-    });
-  }
-
-  if (targetType === 'video') {
-    await supabaseRest(env, 'media_tasks', {
-      method: 'POST',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({
-        account_id: accountId,
-        gallery_id: gallery.id,
-        id: crypto.randomUUID(),
-        task_type: 'generate_web_copy',
-        payload: { r2_key: r2Key, stream_uid: streamUid, target_id: targetId, target_type: targetType },
-        status: 'pending',
-        video_id: targetId,
-      }),
+      body: JSON.stringify({ bytes_uploaded: bytes, status: 'complete' }),
     });
   }
 
@@ -591,13 +919,16 @@ async function clearUploadJob(request, env) {
   const uploadJobId = requireString(body, 'uploadJobId');
   const rows = await supabaseRest(
     env,
-    `upload_jobs?select=id,status&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}&limit=1`,
+    `upload_jobs?select=id,status,target_type,upload_phase,master_verified_at&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}&limit=1`,
     { headers: { accept: 'application/json' } },
   );
   const job = rows?.[0];
   if (!job) return errorJson('Upload job not found.', 404);
   if (!['complete', 'errored'].includes(job.status)) {
     return errorJson('Only complete or errored upload jobs can be cleared.', 409);
+  }
+  if (job.target_type === 'video' && job.master_verified_at && job.upload_phase === 'copy_failed') {
+    return errorJson('This secured master still needs a playback retry or an explicit video delete.', 409);
   }
 
   await supabaseRest(env, `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}`, {
@@ -629,6 +960,14 @@ async function deleteGalleryMedia(request, env) {
   const media = rows?.[0];
   if (!media) return errorJson('Media not found for this gallery.', 404);
 
+  const stagedVideoJobs = targetType === 'video'
+    ? await supabaseRest(
+      env,
+      `upload_jobs?select=id,r2_key,stream_upload_id&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_type=eq.video&target_id=eq.${encodeURIComponent(targetId)}&master_verified_at=not.is.null&upload_phase=neq.ready`,
+      { headers: { accept: 'application/json' } },
+    )
+    : [];
+
   const deletedAt = new Date().toISOString();
   await supabaseRest(env, `${table}?gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(targetId)}&deleted_at=is.null`, {
     method: 'PATCH',
@@ -636,9 +975,14 @@ async function deleteGalleryMedia(request, env) {
     body: JSON.stringify({ deleted_at: deletedAt }),
   });
 
-  const r2Keys = targetType === 'photo'
+  const r2Keys = [...new Set(targetType === 'photo'
     ? [media.r2_key].filter(Boolean)
-    : [media.r2_key, media.web_copy_r2_key, media.poster_r2_key].filter(Boolean);
+    : [
+      media.r2_key,
+      media.web_copy_r2_key,
+      media.poster_r2_key,
+      ...(stagedVideoJobs || []).map((job) => job.r2_key),
+    ].filter(Boolean))];
   for (const r2Key of r2Keys) {
     await supabaseRest(env, 'media_tasks', {
       method: 'POST',
@@ -660,7 +1004,10 @@ async function deleteGalleryMedia(request, env) {
     });
   }
 
-  if (targetType === 'video' && media.stream_uid) {
+  const streamUids = targetType === 'video'
+    ? [...new Set([media.stream_uid, ...(stagedVideoJobs || []).map((job) => job.stream_upload_id)].filter(Boolean))]
+    : [];
+  for (const streamUid of streamUids) {
     await supabaseRest(env, 'media_tasks', {
       method: 'POST',
       headers: { prefer: 'return=minimal' },
@@ -671,7 +1018,7 @@ async function deleteGalleryMedia(request, env) {
         task_type: 'delete_stream',
         payload: {
           deleted_at: deletedAt,
-          stream_uid: media.stream_uid,
+          stream_uid: streamUid,
           target_id: targetId,
           target_type: targetType,
         },
@@ -681,8 +1028,20 @@ async function deleteGalleryMedia(request, env) {
     });
   }
 
+  if (stagedVideoJobs?.length) {
+    await supabaseRest(env, `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_type=eq.video&target_id=eq.${encodeURIComponent(targetId)}&upload_phase=neq.ready`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({
+        error_code: 'upload_target_deleted',
+        error_message: 'Video was deleted before playback preparation completed.',
+        status: 'errored',
+      }),
+    });
+  }
+
   return json({
-    cleanupTasks: r2Keys.length + (targetType === 'video' && media.stream_uid ? 1 : 0),
+    cleanupTasks: r2Keys.length + streamUids.length,
     deletedAt,
     ok: true,
     targetId,
@@ -699,11 +1058,19 @@ async function processReady(request, env) {
   const expiredUploadJobs = await expireStaleUploadJobs(env, accountId);
   const gallery = await assertGalleryMembership(env, accountId, galleryId);
   const videoFilter = videoId ? `&id=eq.${encodeURIComponent(videoId)}` : '';
-  const processingVideos = await supabaseRest(
+  const dualIngestionJobs = await supabaseRest(
+    env,
+    `upload_jobs?select=id,target_id,status,upload_phase,stream_upload_id,is_replacement,r2_key,verified_bytes&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_type=eq.video&status=in.(processing,errored)&upload_phase=in.(master_secured,starting_playback,preparing_playback,copy_failed)${videoId ? `&target_id=eq.${encodeURIComponent(videoId)}` : ''}`,
+    { headers: { accept: 'application/json' } },
+  );
+  const dualIngestionVideoIds = new Set((dualIngestionJobs || []).map((job) => job.target_id).filter(Boolean));
+  const preparingPlaybackJobs = (dualIngestionJobs || []).filter((job) => job.status === 'processing' && job.upload_phase === 'preparing_playback');
+  const allProcessingVideos = await supabaseRest(
     env,
     `videos?select=id,r2_key,web_copy_r2_key,stream_uid,processing_status&gallery_id=eq.${encodeURIComponent(gallery.id)}&deleted_at=is.null&processing_status=in.(processing,uploading)${videoFilter}`,
     { headers: { accept: 'application/json' } },
   );
+  const processingVideos = (allProcessingVideos || []).filter((video) => !dualIngestionVideoIds.has(video.id));
   const pendingTasks = await supabaseRest(
     env,
     `media_tasks?select=id,video_id,payload&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&task_type=eq.generate_web_copy&status=eq.pending${videoId ? `&video_id=eq.${encodeURIComponent(videoId)}` : ''}`,
@@ -729,8 +1096,97 @@ async function processReady(request, env) {
 
   const readyVideos = [];
   const readyReplacementTasks = [];
+  const readyDualIngestionVideoIds = [];
   const failedVideoIds = new Set();
+  const reportedFailedVideoIds = new Set();
   const pendingStreamVideos = [];
+
+  for (const job of preparingPlaybackJobs) {
+    const streamUid = String(job.stream_upload_id || '').trim();
+    if (!streamUid) {
+      await markVideoCopyFailed(env, {
+        accountId,
+        galleryId: gallery.id,
+        job,
+        message: 'Stream copy uid is missing.',
+      });
+      reportedFailedVideoIds.add(job.target_id);
+      continue;
+    }
+
+    let streamVideo = null;
+    try {
+      streamVideo = await getStreamVideo(env, streamUid);
+    } catch (error) {
+      if (streamStatusErrorIsTerminal(error)) {
+        await markVideoCopyFailed(env, {
+          accountId,
+          galleryId: gallery.id,
+          job,
+          message: error instanceof Error ? error.message : 'Stream status check failed.',
+        });
+        reportedFailedVideoIds.add(job.target_id);
+      } else {
+        pendingStreamVideos.push({
+          error: error instanceof Error ? error.message : 'Stream status check failed.',
+          id: job.target_id,
+          state: 'status_error',
+          streamUid,
+        });
+      }
+      continue;
+    }
+
+    const state = String(streamVideo?.status?.state || '').toLowerCase();
+    if (STREAM_FAILED_STATES.has(state)) {
+      await markVideoCopyFailed(env, {
+        accountId,
+        galleryId: gallery.id,
+        job,
+        message: streamVideo?.status?.errorReasonText
+          || streamVideo?.status?.errorReason
+          || streamVideo?.status?.error
+          || 'Cloudflare Stream encode failed.',
+      });
+      reportedFailedVideoIds.add(job.target_id);
+      continue;
+    }
+
+    const ready = streamVideo?.readyToStream === true || state === 'ready';
+    if (!ready) {
+      pendingStreamVideos.push({
+        id: job.target_id,
+        state: state || 'processing',
+        streamUid,
+      });
+      continue;
+    }
+
+    const expectedOrigins = [...streamAllowedOrigins(env)].sort();
+    const actualOrigins = [...(streamVideo.allowedOrigins || [])].sort();
+    const originsMatch = expectedOrigins.length === 0
+      || JSON.stringify(expectedOrigins) === JSON.stringify(actualOrigins);
+    if (streamVideo.requireSignedURLs !== true || !originsMatch) {
+      await markVideoCopyFailed(env, {
+        accountId,
+        galleryId: gallery.id,
+        job,
+        message: 'Cloudflare Stream playback access controls were not applied.',
+      });
+      reportedFailedVideoIds.add(job.target_id);
+      continue;
+    }
+
+    await callUploadRpc(env, 'finalize_video_stream_copy', {
+      p_account_id: accountId,
+      p_duration_seconds: Number.isFinite(Number(streamVideo.duration)) ? Math.round(Number(streamVideo.duration)) : 0,
+      p_gallery_id: gallery.id,
+      p_stream_uid: streamUid,
+      p_upload_job_id: job.id,
+    });
+    readyDualIngestionVideoIds.push(job.target_id);
+  }
+
   for (const video of processingVideos || []) {
     if (video.stream_uid) {
       let streamVideo = null;
@@ -924,16 +1380,18 @@ async function processReady(request, env) {
     });
   }
 
+  failedVideoIds.forEach((id) => reportedFailedVideoIds.add(id));
+
   return json({
     cleanedTasks: readyExistingTaskVideoIds.size,
-    errored: failedVideoIds.size,
-    erroredVideoIds: [...failedVideoIds],
+    errored: reportedFailedVideoIds.size,
+    erroredVideoIds: [...reportedFailedVideoIds],
     expiredUploadJobs,
-    pending: pendingStreamVideos.filter((video) => !failedVideoIds.has(video.id)).length,
+    pending: pendingStreamVideos.filter((video) => !reportedFailedVideoIds.has(video.id)).length,
     pendingStreamVideos,
-    processed: readyVideos.length + readyReplacementTasks.length,
-    processedVideoIds: [...readyVideos.map((video) => video.id), ...readyReplacementTasks.map((task) => task.video_id)],
-    checked: (processingVideos?.length ?? 0) + pendingReplacementTasks.length,
+    processed: readyDualIngestionVideoIds.length + readyVideos.length + readyReplacementTasks.length,
+    processedVideoIds: [...readyDualIngestionVideoIds, ...readyVideos.map((video) => video.id), ...readyReplacementTasks.map((task) => task.video_id)],
+    checked: preparingPlaybackJobs.length + (processingVideos?.length ?? 0) + pendingReplacementTasks.length,
   });
 }
 
@@ -1378,6 +1836,11 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
   try {
     const path = routePath(request);
     if (request.method === 'POST' && path === 'upload/slot') return await uploadSlot(request, env);
+    if (request.method === 'POST' && path === 'upload/video/part') return await videoMultipartPartUrl(request, env);
+    if (request.method === 'POST' && path === 'upload/video/status') return await videoMultipartStatus(request, env);
+    if (request.method === 'POST' && path === 'upload/video/pause') return await pauseVideoMasterUpload(request, env);
+    if (request.method === 'POST' && path === 'upload/video/complete-master') return await completeVideoMaster(request, env);
+    if (request.method === 'POST' && path === 'upload/video/start-playback') return await startVideoPlaybackPreparation(request, env);
     if (request.method === 'POST' && path === 'upload/complete') return await uploadComplete(request, env);
     if (request.method === 'POST' && path === 'upload/clear-job') return await clearUploadJob(request, env);
     if (request.method === 'POST' && path === 'media/delete') return await deleteGalleryMedia(request, env);

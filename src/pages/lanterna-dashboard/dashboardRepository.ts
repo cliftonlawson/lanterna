@@ -487,9 +487,9 @@ export async function loadUploadJobs() {
       galleryId: job.gallery_id,
       targetType: job.target_type,
       targetId: job.target_id,
-      fileName: job.target_type === 'video' && job.target_id
+      fileName: job.file_name || (job.target_type === 'video' && job.target_id
         ? videoTitleById.get(job.target_id) ?? 'Video upload'
-        : 'Photo upload',
+        : 'Photo upload'),
       status: activeStatuses.has(job.status) && !(
         job.target_type === 'video'
           ? validVideoIds.has(job.target_id)
@@ -498,11 +498,14 @@ export async function loadUploadJobs() {
       bytesTotal: Number(job.bytes_total),
       bytesUploaded: Number(job.bytes_uploaded),
       createdAt: job.created_at,
-      errorMessage: activeStatuses.has(job.status) && !(
+      errorCode: job.error_code ?? undefined,
+      errorMessage: job.error_message || (activeStatuses.has(job.status) && !(
         job.target_type === 'video'
           ? validVideoIds.has(job.target_id)
           : validPhotoIds.has(job.target_id)
-      ) ? 'Upload target is missing. Retry this upload.' : undefined,
+      ) ? 'Upload target is missing. Retry this upload.' : undefined),
+      isReplacement: Boolean(job.is_replacement),
+      uploadPhase: job.upload_phase ?? undefined,
     }));
 
     saveStoredUploadJobs(jobs);

@@ -3,15 +3,15 @@ import { Camera, DollarSign, Download, Loader2, Lock, Share2, Trash2, Upload, X 
 import {
   capturePosterFrame,
   completePosterUpload,
-  completeUpload,
+  completeVideoMasterUpload,
   createPosterUploadSlot,
   createUploadSlot,
   getMediaUrls,
   getStreamPlayback,
-  postFileToStream,
-  processUploadedVideos,
   putFileToR2,
+  startVideoPlaybackPreparation,
   type SignedStreamPlayback,
+  uploadVideoMasterMultipart,
 } from './appApi';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
 import { type DashboardGallery } from './model';
@@ -28,9 +28,10 @@ type Props = {
   onGalleryChange: (patch: Partial<DashboardGallery>) => void;
   onClose: () => void;
   onShowToast: (message: string) => void;
+  onUploadStateChange: () => Promise<void>;
 };
 
-export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo, onGalleryChange, onClose, onShowToast }: Props) {
+export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo, onGalleryChange, onClose, onShowToast, onUploadStateChange }: Props) {
   const video = gallery.videoItems.find((item) => item.id === videoId) ?? gallery.videoItems[0];
   const videoIndex = Math.max(0, gallery.videoItems.findIndex((item) => item.id === video?.id));
   const paidEnabled = Boolean(video?.paidUnlockEnabled);
@@ -45,7 +46,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
   const [captureSecond, setCaptureSecond] = useState(0);
   const [posterUploading, setPosterUploading] = useState(false);
   const [videoReplacing, setVideoReplacing] = useState(false);
-  const [replaceStage, setReplaceStage] = useState<'idle' | 'uploading' | 'processing'>('idle');
+  const [replaceStage, setReplaceStage] = useState<'idle' | 'uploading_master' | 'master_secured' | 'preparing_playback'>('idle');
   const [replaceProgress, setReplaceProgress] = useState(0);
   const posterInputRef = useRef<HTMLInputElement | null>(null);
   const playbackKey = video?.webCopyR2Key || video?.r2Key || null;
@@ -57,9 +58,11 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
   const streamUrl = stream?.iframeUrl ?? '';
   const pendingVideo = videoReplacing || video?.processingStatus === 'uploading' || video?.processingStatus === 'processing';
   const pendingLabel = videoReplacing
-    ? replaceStage === 'processing'
-      ? 'Encoding replacement'
-      : `Uploading replacement ${replaceProgress}%`
+    ? replaceStage === 'master_secured'
+      ? 'Master secured'
+      : replaceStage === 'preparing_playback'
+        ? 'Preparing replacement playback'
+        : `Uploading replacement master ${replaceProgress}%`
     : video?.processingStatus === 'processing'
       ? 'Encoding replacement'
       : video?.processingStatus === 'uploading'
@@ -223,7 +226,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
 
     try {
       setVideoReplacing(true);
-      setReplaceStage('uploading');
+      setReplaceStage('uploading_master');
       setReplaceProgress(0);
       updateVideo({ updatedAt: 'Replacing video' });
 
@@ -235,53 +238,20 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
         targetId: video.id,
         targetType: 'video',
       });
+      if (slot.r2.method !== 'MULTIPART') throw new Error('Replacement did not return an R2 multipart session.');
+      await onUploadStateChange();
 
-      let streamUpload = slot.stream?.url ? slot.stream : null;
-      let uploadedR2Key: string | null = null;
-      if (streamUpload) {
-        try {
-          await postFileToStream(file, streamUpload, (bytesUploaded) => setReplaceProgress(Math.round((bytesUploaded / file.size) * 100)));
-        } catch {
-          streamUpload = null;
-          await putFileToR2(file, slot.r2, (bytesUploaded) => setReplaceProgress(Math.round((bytesUploaded / file.size) * 100)));
-          uploadedR2Key = slot.r2.key;
-        }
-      } else {
-        await putFileToR2(file, slot.r2, (bytesUploaded) => setReplaceProgress(Math.round((bytesUploaded / file.size) * 100)));
-        uploadedR2Key = slot.r2.key;
-      }
-
-      await completeUpload({
-        bytes: file.size,
-        galleryId: gallery.id,
-        r2Key: uploadedR2Key,
-        stageReplacement: Boolean(streamUpload),
-        streamUid: streamUpload ? slot.stream?.streamUploadId ?? null : null,
-        targetId: video.id,
-        targetType: 'video',
-        uploadJobId: slot.uploadJobId,
-      });
-
-      const autoReady = Boolean(uploadedR2Key) && !streamUpload;
-      if (autoReady) await processUploadedVideos(gallery.id, video.id);
-      if (streamUpload) {
-        setReplaceStage('processing');
-        const ready = await waitForReplacementReady(gallery.id, video.id);
-        if (!ready) throw new Error('Replacement is still processing. Leave this drawer open or check back in a minute.');
-      }
-
-      updateVideo({
-        posterR2Key: null,
-        processingStatus: 'ready',
-        r2Bytes: file.size,
-        r2Key: uploadedR2Key,
-        streamReady: streamUpload ? true : false,
-        streamUid: streamUpload ? slot.stream?.streamUploadId ?? null : null,
-        updatedAt: 'Ready',
-        webCopyR2Key: null,
-      });
-      setLocalPosterPreviewUrl('');
-      onShowToast('Replacement video ready');
+      await uploadVideoMasterMultipart(
+        file,
+        { galleryId: gallery.id, r2: slot.r2, uploadJobId: slot.uploadJobId },
+        (bytesUploaded) => setReplaceProgress(Math.round((bytesUploaded / file.size) * 100)),
+      );
+      await completeVideoMasterUpload(gallery.id, slot.uploadJobId);
+      setReplaceStage('master_secured');
+      await startVideoPlaybackPreparation(gallery.id, slot.uploadJobId);
+      setReplaceStage('preparing_playback');
+      await onUploadStateChange();
+      onShowToast('Replacement master secured; preparing playback');
     } catch (error) {
       updateVideo({ processingStatus: video.streamUid || video.r2Key || video.webCopyR2Key ? video.processingStatus : 'errored', updatedAt: 'Replacement failed' });
       onShowToast(error instanceof Error ? error.message : 'Replacement upload failed');
@@ -503,21 +473,5 @@ async function pickVideoFile() {
 
     document.body.appendChild(input);
     input.click();
-  });
-}
-
-async function waitForReplacementReady(galleryId: string, videoId: string) {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const result = await processUploadedVideos(galleryId, videoId);
-    if (result.processedVideoIds?.includes(videoId)) return true;
-    await delay(10000);
-  }
-
-  return false;
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
   });
 }

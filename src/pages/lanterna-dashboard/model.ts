@@ -32,7 +32,10 @@ export type UploadJob = {
   bytesTotal: number;
   bytesUploaded: number;
   createdAt: string;
+  errorCode?: string;
   errorMessage?: string;
+  isReplacement?: boolean;
+  uploadPhase?: 'uploading_master' | 'master_secured' | 'starting_playback' | 'preparing_playback' | 'copy_failed' | 'ready';
 };
 
 export type DeliveryRecipient = {
