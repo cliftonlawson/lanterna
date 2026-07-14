@@ -110,6 +110,7 @@ Done when: a real upload produces a verified `r2_key` master and a ready Stream 
 Reason for this position: generalize accounting only after item 14 defines the final object-completion boundary and provides a real R2 object whose size can be verified.
 At completion, obtain actual object size with R2 `HEAD`, record usage from the verified size rather than client `bytesTotal`, bind upload authorization to the intended object, and make completion idempotent so retries cannot double-count.
 Implementation note: the generalized path covers photos, uploaded posters, and gallery backgrounds with server-owned jobs; captured Stream frames are also HEAD-verified. Exact bytes are retained and converted to decimal GB so small files do not round to zero.
+Live verification passed 2026-07-14: browser-authenticated asset-state writes and completion RPC calls were rejected; raw photo, background, and poster uploads recorded exact provider-verified bytes once; completion replays added no usage; and a wrong-sized signed PUT returned 403 without creating an object.
 Done when: a raw client cannot under-report bytes, completion records the provider-verified size, and repeated completion requests produce one usage increment.
 
 ### 18a. Password-gallery sentinel removal
