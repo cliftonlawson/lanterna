@@ -96,7 +96,7 @@ galleries
   client_name         text null
   event_date          date null
   project_type        project_type           -- wedding | engagement | portrait
-  slug                text                    -- unique per account; used in delivery URL
+  slug                text                    -- globally unique; used in delivery URL
   access_type         access_type            -- public | password | private
   password_hash       text null              -- required non-null when access_type = password
   status              gallery_status         -- draft | published | delivered
@@ -120,7 +120,7 @@ galleries
   updated_at          timestamptz default now()
   deleted_at          timestamptz null        -- soft delete (undo window)
 
-  unique (account_id, slug)
+  unique (slug)                               -- deleted slugs remain reserved; never reassign an old client URL
   index (account_id, status, archived_at)
   index (access_expires_at) where deleted_at is null
 ```
