@@ -122,6 +122,7 @@ Done when: a newly created password gallery unlocks with the actual password and
 ### 18b. Global slug uniqueness
 Reason for this position: public lookup is global, so enforce global uniqueness while there is one studio and no known collision migration to resolve.
 Replace per-account slug uniqueness with a global database constraint and keep slug generation/retry behavior honest under collisions.
+Live verification passed 2026-07-14: the same slug persisted for one account and returned 409 from `galleries_slug_global_unique` for a second account, while an existing public delivery link continued to resolve with 200.
 Done when: two accounts cannot persist the same public slug and existing public links still resolve.
 
 ### 19. Honest media-task ledger
