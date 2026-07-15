@@ -116,6 +116,7 @@ Done when: a raw client cannot under-report bytes, completion records the provid
 ### 18a. Password-gallery sentinel removal
 Reason for this position: with storage and accounting integrity closed, repair the remaining launch access flow before production-origin review.
 Remove the unusable password placeholder path, hash the studio's real password through the server-owned flow, and ensure no plaintext password is persisted or returned.
+Live verification passed 2026-07-14: browser-authenticated password-hash/access writes and forged public inserts returned 400 while normal metadata remained editable; server-generated PBKDF2 passwords challenged public access, rejected the old/wrong password, accepted the replacement password, and returned no hash or plaintext.
 Done when: a newly created password gallery unlocks with the actual password and rejects an incorrect one.
 
 ### 18b. Global slug uniqueness
