@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "audit:stream-orphans": "node scripts/audit-stream-orphans.mjs",
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
@@ -11,6 +12,7 @@
     "smoke:gallery": "node scripts/smoke-gallery.mjs",
     "test:gallery-password": "node scripts/test-gallery-password.mjs",
     "test:gallery-slugs": "node scripts/test-gallery-slugs.mjs",
+    "test:media-task-ledger": "node scripts/test-honest-media-tasks.mjs",
     "test:upload-accounting": "node scripts/test-upload-accounting.mjs",
     "test:video-ingestion": "node scripts/test-dual-video-ingestion.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"

@@ -53,10 +53,10 @@ Verification: live temp-account check passed 2026-07-07. Over-allowance `/api/up
 Item 7 reserves allowance from `upload_jobs` in `pending` or `uploading`, but there is no stale-job expiry yet. Add a timeout that marks abandoned active jobs `errored` so their reserved bytes stop blocking future upload slots. Keep it small: either a lazy sweep inside the slot gate before reserved allowance is calculated, or a tiny scheduled/admin check.
 Done when: an old abandoned `pending` or `uploading` job is moved to `errored`, the next slot calculation no longer counts its `bytes_total`, and recent active jobs remain untouched.
 
-### 7b. Orphan Stream assets from failed upload test
-Two 2026-07-07 4K test uploads completed in Cloudflare Stream but lost their matching `videos` rows during the pre-7a autosave deletion bug. Decide deliberately whether to recover them into database rows or delete them from Cloudflare Stream. Do not leave orphaned Stream assets drifting, since they burn stored minutes without a gallery row and are exactly the kind of database-vs-provider mismatch `reconcile_usage` should eventually catch.
-Known orphan Stream UIDs: `43f14a747652f4809f558eee6a41846e` for target video `00b2d9c7-4904-4fe1-889d-8bff2dd4e476`, and `748396d55e63d794b27f8496f2e2fbed` for target video `e251a7da-1f95-4e73-ba69-1c2e3fe3d196`.
-Done when: both orphan assets are either represented by intentional `videos` rows and matching upload/job state, or deleted from Cloudflare Stream with the decision noted.
+### 7b. Orphan Stream asset cleanup
+The provider-versus-database audit on 2026-07-14 found 19 Cloudflare Stream assets: 4 are represented by active `videos` rows and 15 are orphaned. Every orphan carries a Lanterna `targetId` or `videoId` whose video row no longer exists; the audit found zero recovery candidates and zero superseded current-video assets. Decision: delete all 15 from Cloudflare Stream rather than inventing database rows for disposable test media. Keep the cleanup explicit and provider-confirmed; do not infer success from a local row change.
+Known orphan Stream UIDs: `43f14a747652f4809f558eee6a41846e`, `748396d55e63d794b27f8496f2e2fbed`, `9064e72eb9d327c23186002b5b2e741f`, `73e6f27d29665c62868bbabe3321d444`, `2f2658301a16fb68b9184ccd587e5094`, `72416013b8fd0c16f72f558ac246530b`, `c60ac066d42054a72c6bdd19234d9e1f`, `d34fc03506a64cad53f1f5fedfa47713`, `bec44a3be7558086d11e1e6212a4d0da`, `71a692be86bccc5b26ce252c5bda2787`, `5915536628f323a6632fb258c0e75a58`, `6dbb21cb191d301462fd7b20ad0db215`, `adf0c065a6516307c95fa4f0f4a382cd`, `165cfa568c046b597f6a89a7ca6f4315`, `f800442850340525fca3cc142dccb741`.
+Done when: all 15 UIDs are absent from Cloudflare Stream and `npm run audit:stream-orphans` reports zero Lanterna-managed orphan assets.
 
 ---
 
@@ -128,6 +128,7 @@ Done when: two accounts cannot persist the same public slug and existing public 
 ### 19. Honest media-task ledger
 Reason for this position: stop writing false completion history after the upload paths are settled, without pretending the deferred worker now exists.
 Stop creating or marking `generate_web_copy` tasks done when no web-copy work occurred. Keep real work pending or stop generating it until a worker exists. Expand item 7b's reconciliation scope to all audited Cloudflare Stream assets without matching video rows, not only the two initially observed orphans.
+Implementation decision: `process-ready` must not mutate outbox tasks at all. Historical `generate_web_copy` rows stay done only when their video carries a real `web_copy_r2_key`; unperformed work returns to pending, and tasks whose target no longer exists fail with an explicit reason. The worker remains deferred.
 Done when: no task is marked done without its work occurring, and the orphan reconciliation decision covers the full provider-versus-database inventory.
 
 ---

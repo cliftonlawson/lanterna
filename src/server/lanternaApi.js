@@ -1180,31 +1180,8 @@ async function processReady(request, env) {
     { headers: { accept: 'application/json' } },
   );
   const processingVideos = (allProcessingVideos || []).filter((video) => !dualIngestionVideoIds.has(video.id));
-  const pendingTasks = await supabaseRest(
-    env,
-    `media_tasks?select=id,video_id,payload&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&task_type=eq.generate_web_copy&status=eq.pending${videoId ? `&video_id=eq.${encodeURIComponent(videoId)}` : ''}`,
-    { headers: { accept: 'application/json' } },
-  );
-  const pendingReplacementTasks = (pendingTasks || []).filter((task) => task?.payload?.replacement === true && task?.payload?.stream_uid && task?.video_id);
-  const pendingNonReplacementTasks = (pendingTasks || []).filter((task) => task?.payload?.replacement !== true && task?.video_id);
-  const pendingNonReplacementVideoIds = [...new Set(pendingNonReplacementTasks.map((task) => task.video_id).filter(Boolean))];
-  const readyExistingTaskVideoIds = new Set();
-
-  if (pendingNonReplacementVideoIds.length > 0) {
-    const taskVideos = await supabaseRest(
-      env,
-      `videos?select=id,r2_key,web_copy_r2_key,stream_uid,stream_ready,processing_status&gallery_id=eq.${encodeURIComponent(gallery.id)}&id=in.(${pendingNonReplacementVideoIds.map((id) => encodeURIComponent(id)).join(',')})&deleted_at=is.null`,
-      { headers: { accept: 'application/json' } },
-    );
-
-    for (const taskVideo of taskVideos || []) {
-      const hasPlayableAsset = Boolean(taskVideo.r2_key || taskVideo.web_copy_r2_key || (taskVideo.stream_uid && taskVideo.stream_ready));
-      if (taskVideo.processing_status === 'ready' && hasPlayableAsset) readyExistingTaskVideoIds.add(taskVideo.id);
-    }
-  }
 
   const readyVideos = [];
-  const readyReplacementTasks = [];
   const readyDualIngestionVideoIds = [];
   const failedVideoIds = new Set();
   const reportedFailedVideoIds = new Set();
@@ -1348,57 +1325,6 @@ async function processReady(request, env) {
     }
   }
 
-  for (const task of pendingReplacementTasks) {
-    const streamUid = String(task.payload.stream_uid || '').trim();
-    let streamVideo = null;
-    try {
-      streamVideo = await getStreamVideo(env, streamUid);
-    } catch (error) {
-      if (streamStatusErrorIsTerminal(error)) {
-        failedVideoIds.add(task.video_id);
-      }
-      pendingStreamVideos.push({
-        error: error instanceof Error ? error.message : 'Stream status check failed.',
-        id: task.video_id,
-        state: 'status_error',
-        streamUid,
-      });
-      continue;
-    }
-
-    const state = String(streamVideo?.status?.state || '').toLowerCase();
-    if (STREAM_FAILED_STATES.has(state)) {
-      failedVideoIds.add(task.video_id);
-      pendingStreamVideos.push({
-        error: streamVideo?.status?.errorReason || streamVideo?.status?.error || 'Cloudflare Stream encode failed.',
-        id: task.video_id,
-        state: state || 'failed',
-        streamUid,
-      });
-      continue;
-    }
-
-    const ready = streamVideo?.readyToStream === true || state === 'ready';
-    if (!ready) {
-      pendingStreamVideos.push({
-        id: task.video_id,
-        state: state || 'processing',
-        streamUid,
-      });
-      continue;
-    }
-
-    readyReplacementTasks.push({
-      duration_seconds: Number.isFinite(Number(streamVideo.duration)) ? Math.round(Number(streamVideo.duration)) : null,
-      r2_bytes: Number(task.payload.r2_bytes || 0),
-      r2_key: String(task.payload.r2_key || '').trim() || null,
-      stream_uid: streamUid,
-      task_id: task.id,
-      upload_job_id: String(task.payload.upload_job_id || '').trim() || null,
-      video_id: task.video_id,
-    });
-  }
-
   for (const video of readyVideos) {
     await supabaseRest(env, `videos?id=eq.${encodeURIComponent(video.id)}&gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
       method: 'PATCH',
@@ -1416,56 +1342,6 @@ async function processReady(request, env) {
       body: JSON.stringify({ status: 'complete' }),
     });
 
-    await supabaseRest(env, `media_tasks?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&video_id=eq.${encodeURIComponent(video.id)}&status=eq.pending`, {
-      method: 'PATCH',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'done' }),
-    });
-  }
-
-  for (const replacement of readyReplacementTasks) {
-    await supabaseRest(env, `videos?id=eq.${encodeURIComponent(replacement.video_id)}&gallery_id=eq.${encodeURIComponent(gallery.id)}`, {
-      method: 'PATCH',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({
-        ...(replacement.duration_seconds ? { duration_seconds: replacement.duration_seconds } : {}),
-        poster_r2_key: null,
-        processing_status: 'ready',
-        r2_bytes: replacement.r2_bytes,
-        r2_key: replacement.r2_key,
-        stream_ready: true,
-        stream_uid: replacement.stream_uid,
-        web_copy_r2_key: null,
-      }),
-    });
-
-    if (replacement.upload_job_id) {
-      await supabaseRest(env, `upload_jobs?id=eq.${encodeURIComponent(replacement.upload_job_id)}&account_id=eq.${encodeURIComponent(accountId)}`, {
-        method: 'PATCH',
-        headers: { prefer: 'return=minimal' },
-        body: JSON.stringify({ bytes_uploaded: replacement.r2_bytes, status: 'complete' }),
-      });
-    } else {
-      await supabaseRest(env, `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_id=eq.${encodeURIComponent(replacement.video_id)}`, {
-        method: 'PATCH',
-        headers: { prefer: 'return=minimal' },
-        body: JSON.stringify({ status: 'complete' }),
-      });
-    }
-
-    await supabaseRest(env, `media_tasks?id=eq.${encodeURIComponent(replacement.task_id)}&account_id=eq.${encodeURIComponent(accountId)}`, {
-      method: 'PATCH',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'done' }),
-    });
-  }
-
-  if (readyExistingTaskVideoIds.size > 0) {
-    await supabaseRest(env, `media_tasks?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&task_type=eq.generate_web_copy&status=eq.pending&video_id=in.(${[...readyExistingTaskVideoIds].map((id) => encodeURIComponent(id)).join(',')})`, {
-      method: 'PATCH',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'done' }),
-    });
   }
 
   if (failedVideoIds.size > 0) {
@@ -1482,25 +1358,19 @@ async function processReady(request, env) {
       body: JSON.stringify({ status: 'errored' }),
     });
 
-    await supabaseRest(env, `media_tasks?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&video_id=in.(${failedIds})&status=eq.pending`, {
-      method: 'PATCH',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'failed', last_error: 'Cloudflare Stream encode failed.' }),
-    });
   }
 
   failedVideoIds.forEach((id) => reportedFailedVideoIds.add(id));
 
   return json({
-    cleanedTasks: readyExistingTaskVideoIds.size,
     errored: reportedFailedVideoIds.size,
     erroredVideoIds: [...reportedFailedVideoIds],
     expiredUploadJobs,
     pending: pendingStreamVideos.filter((video) => !reportedFailedVideoIds.has(video.id)).length,
     pendingStreamVideos,
-    processed: readyDualIngestionVideoIds.length + readyVideos.length + readyReplacementTasks.length,
-    processedVideoIds: [...readyDualIngestionVideoIds, ...readyVideos.map((video) => video.id), ...readyReplacementTasks.map((task) => task.video_id)],
-    checked: preparingPlaybackJobs.length + (processingVideos?.length ?? 0) + pendingReplacementTasks.length,
+    processed: readyDualIngestionVideoIds.length + readyVideos.length,
+    processedVideoIds: [...readyDualIngestionVideoIds, ...readyVideos.map((video) => video.id)],
+    checked: preparingPlaybackJobs.length + (processingVideos?.length ?? 0),
   });
 }
 
