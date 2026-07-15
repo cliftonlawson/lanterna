@@ -129,6 +129,7 @@ Done when: two accounts cannot persist the same public slug and existing public 
 Reason for this position: stop writing false completion history after the upload paths are settled, without pretending the deferred worker now exists.
 Stop creating or marking `generate_web_copy` tasks done when no web-copy work occurred. Keep real work pending or stop generating it until a worker exists. Expand item 7b's reconciliation scope to all audited Cloudflare Stream assets without matching video rows, not only the two initially observed orphans.
 Implementation decision: `process-ready` must not mutate outbox tasks at all. Historical `generate_web_copy` rows stay done only when their video carries a real `web_copy_r2_key`; unperformed work returns to pending, and tasks whose target no longer exists fail with an explicit reason. The worker remains deferred.
+Live verification passed 2026-07-15: the repair left 4 existing-video tasks pending, marked 7 missing-target tasks failed with an explicit error, and left zero false `done` rows. A disposable `process-ready` call advanced its video to ready while an unrelated pending `delete_r2` task remained unchanged; all probe rows were removed afterward. The provider audit independently confirmed 19 Stream assets, 4 active matches, 0 recovery candidates, and the 15 deletion candidates recorded under item 7b.
 Done when: no task is marked done without its work occurring, and the orphan reconciliation decision covers the full provider-versus-database inventory.
 
 ---
