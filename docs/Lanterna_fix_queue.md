@@ -152,6 +152,7 @@ Done when: reviewed against the SOP's access-control section with findings writt
 
 ### 12. Guardrail tests so this queue doesn't refill
 The minimum set that catches regressions in the riskiest spots: a Playwright test for public gallery playback (poster-first, iframe only after play), a test that a draft gallery 404s publicly, and unit tests around `dashboardRepository.loadUploadJobs`. Plus the typed route-contract layer the packet suggests, which turns payload-shape bugs (like the paid-unlock R2 shape fix) into compile errors instead of runtime surprises.
+Known smoke-harness gap found 2026-07-15: the default `test` slug now correctly 404s because that gallery is archived, while a locked-only published gallery can return `ok: true` with the contradictory message `Gallery smoke check failed` without exercising any playback URL. Item 12 must give the smoke run an intentional published fixture, distinguish an expected locked-only pass from a playable-video pass, and fail when playback coverage was expected but skipped.
 Done when: tests run in CI (or at minimum on every branch before merge) and fail loudly.
 
 ### 13. Systematic client-trust audit
