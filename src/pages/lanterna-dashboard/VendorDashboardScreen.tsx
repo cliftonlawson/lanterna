@@ -52,7 +52,7 @@ export function VendorDashboardScreen({ workspace, onWorkspaceChange }: Props) {
           <label>Custom domain<input value={workspace.customDomain ?? ''} onChange={(event) => onWorkspaceChange({ customDomain: event.target.value || null })} /></label>
           <h3>Brand accent</h3>
           <div className="swatches">
-            {['#FFB24D', '#FF7A2F', '#C9A86A', '#7BC47F', '#7AA7E8'].map((color) => (
+            {['#6EE7F9', '#818CF8', '#9CC3E8', '#7BC47F', '#7AA7E8'].map((color) => (
               <button key={color} className={workspace.accentColor === color ? 'selected' : ''} style={{ background: color }} onClick={() => onWorkspaceChange({ accentColor: color })} />
             ))}
           </div>

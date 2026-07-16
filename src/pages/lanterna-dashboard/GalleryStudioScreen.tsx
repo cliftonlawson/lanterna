@@ -396,7 +396,7 @@ function DesignPanel({
     music: { title: 'Music and featured film', kicker: 'Upload your own track and choose the film the gallery leads with.' },
     styles: { title: 'Client styling', kicker: 'Theme, accent, typography, and top-button visibility.' },
   };
-  const accentPresets = ['#FFB24D', '#FF7A2F', '#C9A86A', '#7BC47F', '#7AA7E8'];
+  const accentPresets = ['#6EE7F9', '#818CF8', '#9CC3E8', '#7BC47F', '#7AA7E8'];
   const currentLayout = galleryLayoutOptions.find((item) => item.variant === design.layout) ?? galleryLayoutOptions[0];
 
   return (

@@ -155,7 +155,7 @@ export const defaultWorkspaceAccount: WorkspaceAccount = {
   accountId: null,
   studioName: 'Lanterna Studio',
   tagline: 'Wedding films, delivered beautifully',
-  accentColor: '#FFB24D',
+  accentColor: '#6EE7F9',
   defaultDownloads: true,
   customDomain: null,
   allowanceUsedGb: 0,
@@ -189,7 +189,7 @@ export function defaultDeliveryDraft(recipients = ''): DeliveryDraft {
 
 export function defaultGalleryDesign(title: string, gradient = mediaTileGradients[0]): GalleryDesign {
   return {
-    accent: '#FFB24D',
+    accent: '#6EE7F9',
     backgroundGradient: gradient,
     backgroundR2Key: null,
     backgroundType: 'image',

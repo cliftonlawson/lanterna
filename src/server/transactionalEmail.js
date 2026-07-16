@@ -29,7 +29,7 @@ function cleanText(value = '', fallback = '') {
 
 function cleanAccentColor(value = '') {
   const color = String(value || '').trim();
-  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#FFB24D';
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#6EE7F9';
 }
 
 function textToHtml(text = '') {

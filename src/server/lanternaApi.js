@@ -1679,7 +1679,7 @@ async function publicGalleryPayload(env, gallery) {
     media,
     stream,
     workspace: {
-      accentColor: brandingRow?.accent_color ?? '#FFB24D',
+      accentColor: brandingRow?.accent_color ?? '#6EE7F9',
       customDomain: brandingRow?.custom_domain ?? null,
       studioName: brandingRow?.studio_name ?? 'Lanterna Studio',
       tagline: brandingRow?.tagline ?? null,
