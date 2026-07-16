@@ -1096,6 +1096,8 @@
 .drawer-processing-overlay strong { font-size: 17px; }
 .drawer-processing-overlay span { max-width: 330px; color: rgba(247,241,231,.72); font-size: 13px; line-height: 1.45; }
 .drawer-status-callout { display: flex; align-items: center; gap: 10px; margin: 14px 22px 0; padding: 12px 14px; border: 1px solid rgba(255,178,77,.24); border-radius: 12px; background: rgba(255,178,77,.08); color: #F2DEC0; font-size: 13px; font-weight: 700; }
+.drawer-status-callout.is-error { border-color: rgba(255,90,70,.3); background: rgba(255,90,70,.1); color: #FFD3CD; }
+.drawer-status-callout.is-error svg { color: #FF8A7A; animation: none; }
 @keyframes lanterna-spin { to { transform: rotate(360deg); } }
 .drawer-actions { display: flex; align-items: center; gap: 10px; padding: 18px 22px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .drawer-actions button, .danger { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 99px; padding: 9px 13px; background: var(--chip); color: var(--text2); cursor: pointer; }

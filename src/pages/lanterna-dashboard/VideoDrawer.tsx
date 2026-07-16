@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, DollarSign, Download, Loader2, Lock, Share2, Trash2, Upload, X } from 'lucide-react';
+import { AlertCircle, Camera, DollarSign, Download, Loader2, Lock, Share2, Trash2, Upload, X } from 'lucide-react';
 import {
   capturePosterFrame,
   completePosterUpload,
@@ -14,7 +14,7 @@ import {
   uploadVideoMasterMultipart,
 } from './appApi';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
-import { type DashboardGallery } from './model';
+import { type DashboardGallery, type UploadJob } from './model';
 import { publicGalleryUrl } from './publicLinks';
 import { Panel, Toggle } from './shared';
 
@@ -23,6 +23,7 @@ const PLATFORM_FEE_RATE = 0.1;
 type Props = {
   gallery: DashboardGallery;
   publicGalleryBase: string;
+  uploadJobs: UploadJob[];
   videoId: string | null;
   onDeleteVideo: (videoId: string) => Promise<void>;
   onGalleryChange: (patch: Partial<DashboardGallery>) => void;
@@ -31,7 +32,7 @@ type Props = {
   onUploadStateChange: () => Promise<void>;
 };
 
-export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo, onGalleryChange, onClose, onShowToast, onUploadStateChange }: Props) {
+export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, onDeleteVideo, onGalleryChange, onClose, onShowToast, onUploadStateChange }: Props) {
   const video = gallery.videoItems.find((item) => item.id === videoId) ?? gallery.videoItems[0];
   const videoIndex = Math.max(0, gallery.videoItems.findIndex((item) => item.id === video?.id));
   const paidEnabled = Boolean(video?.paidUnlockEnabled);
@@ -56,13 +57,24 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
   const remotePosterUrl = posterKey && !/\.tiff?($|\?)/i.test(posterKey) ? signedUrls[posterKey] : stream?.thumbnailUrl ?? '';
   const posterUrl = localPosterPreviewUrl || remotePosterUrl;
   const streamUrl = stream?.iframeUrl ?? '';
-  const pendingVideo = videoReplacing || video?.processingStatus === 'uploading' || video?.processingStatus === 'processing';
-  const pendingLabel = videoReplacing
-    ? replaceStage === 'master_secured'
-      ? 'Master secured'
-      : replaceStage === 'preparing_playback'
-        ? 'Preparing replacement playback'
-        : `Uploading replacement master ${replaceProgress}%`
+  const replacementJob = latestReplacementJob(uploadJobs, gallery.id, video?.id);
+  const serverReplacementPending = Boolean(replacementJob
+    && replacementJob.status !== 'complete'
+    && replacementJob.status !== 'errored'
+    && replacementJob.uploadPhase !== 'ready');
+  const replacementPending = videoReplacing || serverReplacementPending;
+  const replacementFailed = Boolean(replacementJob
+    && (replacementJob.status === 'errored' || replacementJob.uploadPhase === 'copy_failed'));
+  const serverReplaceProgress = replacementJob?.bytesTotal
+    ? Math.round((replacementJob.bytesUploaded / replacementJob.bytesTotal) * 100)
+    : 0;
+  const pendingVideo = replacementPending || video?.processingStatus === 'uploading' || video?.processingStatus === 'processing';
+  const pendingLabel = replacementPending
+    ? replacementStatusLabel(
+      videoReplacing ? replaceStage : replacementJob?.uploadPhase,
+      videoReplacing ? replaceProgress : serverReplaceProgress,
+      replacementJob?.status,
+    )
     : video?.processingStatus === 'processing'
       ? 'Encoding replacement'
       : video?.processingStatus === 'uploading'
@@ -299,11 +311,17 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
             <span>{pendingLabel}. This can take a few minutes after larger uploads finish.</span>
           </div>
         )}
+        {replacementFailed && (
+          <div className="drawer-status-callout is-error" role="alert">
+            <AlertCircle size={16} />
+            <span>{replacementJob?.errorMessage || 'Replacement preparation failed.'} The existing video is unchanged.</span>
+          </div>
+        )}
         <div className="drawer-actions">
           <button onClick={copyGalleryLink}><Share2 size={15} /> Share</button>
           <button onClick={() => onShowToast(video?.downloadEnabled ? 'Download queued' : 'Downloads are disabled for this film')}><Download size={15} /> Download</button>
-          <button disabled={videoReplacing} onClick={() => void chooseReplacementVideo()}>
-            <Upload size={15} /> {videoReplacing ? `Replacing ${replaceProgress}%` : 'Replace video'}
+          <button disabled={replacementPending} onClick={() => void chooseReplacementVideo()}>
+            <Upload size={15} /> {replacementPending ? replacementButtonLabel(pendingLabel) : 'Replace video'}
           </button>
           <button className="primary" onClick={() => { onShowToast('Video changes saved'); onClose(); }}>Save changes</button>
         </div>
@@ -419,6 +437,35 @@ function formatFrameTime(seconds: number) {
   const minutes = Math.floor(safeSeconds / 60);
   const remainingSeconds = safeSeconds - minutes * 60;
   return `${minutes}:${remainingSeconds.toFixed(1).padStart(4, '0')}`;
+}
+
+function latestReplacementJob(uploadJobs: UploadJob[], galleryId: string, videoId: string | undefined) {
+  if (!videoId) return undefined;
+
+  return uploadJobs.reduce<UploadJob | undefined>((latest, job) => {
+    if (!job.isReplacement || job.galleryId !== galleryId || job.targetId !== videoId) return latest;
+    if (!latest || job.createdAt > latest.createdAt) return job;
+    return latest;
+  }, undefined);
+}
+
+function replacementStatusLabel(
+  phase: UploadJob['uploadPhase'] | 'idle' | undefined,
+  progress: number,
+  status: UploadJob['status'] | undefined,
+) {
+  if (status === 'paused') return `Replacement upload paused at ${progress}%`;
+  if (phase === 'master_secured') return 'Replacement master secured';
+  if (phase === 'starting_playback' || phase === 'preparing_playback') return 'Preparing replacement playback';
+  return `Uploading replacement master ${progress}%`;
+}
+
+function replacementButtonLabel(statusLabel: string) {
+  if (statusLabel.startsWith('Uploading replacement master')) {
+    return statusLabel.replace('Uploading replacement master', 'Replacing');
+  }
+  if (statusLabel.includes('paused')) return 'Replacement paused';
+  return 'Preparing replacement';
 }
 
 async function pickVideoFile() {
