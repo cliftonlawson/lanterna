@@ -246,7 +246,7 @@ function publicPreviewFilm(video: MediaVideo, index: number): PreviewFilm {
     paidUnlockTagline: video.paidUnlockTagline,
     sourceVideoId: video.id,
     title: video.title,
-    tone: index === 0 ? '#C4AE88' : '#CDB998',
+    tone: index === 0 ? '#2F5586' : '#536F8F',
   };
 }
 
@@ -494,10 +494,14 @@ function publicDesign(rawDesign: Record<string, unknown> | null, fallbackTitle: 
   const defaults = defaultGalleryDesign(fallbackTitle);
   const headlineFont = text(rawDesign?.headline_font) || defaults.headlineFont;
   const bodyFont = text(rawDesign?.body_font) || defaults.bodyFont;
+  const enabledButtons = rawDesign?.enabled_buttons && typeof rawDesign.enabled_buttons === 'object' && !Array.isArray(rawDesign.enabled_buttons)
+    ? rawDesign.enabled_buttons as Record<string, unknown>
+    : null;
 
   return {
     ...defaults,
     accent: text(rawDesign?.accent_color) || defaults.accent,
+    backgroundGradient: text(rawDesign?.background_gradient) || text(enabledButtons?.backgroundGradient) || defaults.backgroundGradient,
     backgroundR2Key: text(rawDesign?.background_r2_key) || null,
     backgroundType: rawDesign?.background_type === 'video' ? 'video' : 'image',
     bodyFont,

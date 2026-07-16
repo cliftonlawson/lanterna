@@ -121,6 +121,7 @@ export type GalleryDesign = {
   heading_subtitle: string | null;
   layout_template: string;
   background_type: 'image' | 'video';
+  background_gradient?: string | null;
   background_r2_key: string | null;
   theme: string;
   accent_color: string | null;
@@ -131,7 +132,7 @@ export type GalleryDesign = {
   body_font_weight: number | null;
   music_track_r2_key: string | null;
   featured_video_id: string | null;
-  enabled_buttons: { share?: boolean; embed?: boolean; download?: boolean } | Record<string, boolean>;
+  enabled_buttons: { backgroundGradient?: string; share?: boolean; embed?: boolean; download?: boolean } | Record<string, boolean | string>;
   allow_downloads: boolean | null;
   updated_at: string;
 };

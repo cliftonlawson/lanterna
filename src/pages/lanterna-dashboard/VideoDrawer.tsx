@@ -398,7 +398,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
                 <span><DollarSign size={20} /></span>
                 <div>
                   <strong>You receive ${payoutDollars} per unlock</strong>
-                  <p>Couple pays ${paidPriceDollars} / Lanterna fee 10% (${feeDollars}) / paid out to your studio.</p>
+                  <p>Couple pays ${paidPriceDollars} / LANTERNA fee 10% (${feeDollars}) / paid out to your studio.</p>
                 </div>
               </div>
             </>

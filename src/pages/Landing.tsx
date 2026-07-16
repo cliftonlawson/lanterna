@@ -155,9 +155,9 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
       </div>
 
       <nav className="landing-nav" aria-label="Landing navigation">
-        <a className="landing-brand" href="#top" aria-label="Lanterna home">
+        <a className="landing-brand" href="#top" aria-label="LANTERNA home">
           <LanternLogo size={36} />
-          <span>Lanterna</span>
+          <span>LANTERNA</span>
         </a>
         <div className="landing-nav-links">
           <a href="#features">Features</a>
@@ -178,7 +178,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
             <span>like never before</span>
           </h1>
           <p>
-            Lanterna is the simplest way for filmmakers to share videos and photos with clients.
+            LANTERNA is the simplest way for filmmakers to share videos and photos with clients.
             Upload, organize, and deliver - to a gallery that feels like a premier, not a folder.
           </p>
           <div className="landing-hero-actions">
@@ -231,7 +231,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
               <p>Monetize</p>
               <h2>
                 Make money on
-                <span>Lanterna</span>
+                <span>LANTERNA</span>
               </h2>
               <p>
                 Offer ceremony films, full speeches, rehearsal cuts, vertical reels, and extended edits as
@@ -277,7 +277,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
             Ready to illuminate
             <span>your client experience?</span>
           </h2>
-          <p>Join thousands of filmmakers delivering their best work through Lanterna.</p>
+          <p>Join thousands of filmmakers delivering their best work through LANTERNA.</p>
           <button className="landing-primary" onClick={onGetStarted}>Get started for free</button>
         </section>
       </main>
@@ -285,9 +285,9 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
       <footer className="landing-footer" id="footer">
         <a className="landing-footer-brand" href="#top">
           <LanternLogo size={24} />
-          <span>Lanterna</span>
+          <span>LANTERNA</span>
         </a>
-        <p>© 2026 Lanterna. All rights reserved.</p>
+        <p>© 2026 LANTERNA. All rights reserved.</p>
         <nav aria-label="Footer links">
           <a href="#footer">Privacy</a>
           <a href="#footer">Terms</a>

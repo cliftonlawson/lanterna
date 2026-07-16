@@ -33,6 +33,7 @@ export type GalleryDesignRecord = {
   heading_subtitle: string | null;
   layout_template: string;
   background_type: 'image' | 'video';
+  background_gradient?: string | null;
   background_r2_key: string | null;
   theme: string;
   accent_color: string | null;
@@ -44,6 +45,7 @@ export type GalleryDesignRecord = {
   music_track_r2_key: string | null;
   featured_video_id: string | null;
   enabled_buttons: Partial<{
+    backgroundGradient: string;
     download: boolean;
     embed: boolean;
     share: boolean;
@@ -149,6 +151,7 @@ const layoutSet = new Set<GalleryDesign['layout']>([
   'passage',
   'salon',
 ]);
+
 const typographySet = new Set<GalleryDesign['typography']>(['editorial', 'modern']);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -251,6 +254,7 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       heading_subtitle: gallery.design.subtitle || null,
       layout_template: gallery.design.layout,
       background_type: gallery.design.backgroundType,
+      background_gradient: gallery.design.backgroundGradient,
       background_r2_key: gallery.design.backgroundR2Key,
       theme: gallery.design.theme,
       accent_color: gallery.design.accent,
@@ -261,7 +265,10 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       body_font_weight: gallery.design.bodyFontWeight,
       music_track_r2_key: gallery.design.musicTrack || null,
       featured_video_id: featuredVideo ? videoDatabaseId(featuredVideo.id) : null,
-      enabled_buttons: gallery.design.topButtons,
+      enabled_buttons: {
+        ...gallery.design.topButtons,
+        backgroundGradient: gallery.design.backgroundGradient,
+      },
       allow_downloads: gallery.allowDownloads,
     },
     videos: gallery.videoItems.map((video, index) => ({
@@ -316,9 +323,16 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
   const featuredVideo = videos.find((video) => video.id === bundle.design.featured_video_id) ?? videos[0];
   const designDefaults = defaultGalleryDesign(bundle.gallery.name, fallbackGradient);
   const enabledButtons = bundle.design.enabled_buttons ?? designDefaults.topButtons;
+  const savedBackgroundGradient = 'backgroundGradient' in enabledButtons
+    && typeof enabledButtons.backgroundGradient === 'string'
+    ? enabledButtons.backgroundGradient
+    : null;
   const design: GalleryDesign = {
     ...designDefaults,
     accent: bundle.design.accent_color ?? designDefaults.accent,
+    backgroundGradient: bundle.design.background_gradient
+      ?? savedBackgroundGradient
+      ?? designDefaults.backgroundGradient,
     backgroundR2Key: bundle.design.background_r2_key,
     backgroundType: bundle.design.background_type,
     eyebrow: bundle.design.heading_eyebrow ?? designDefaults.eyebrow,

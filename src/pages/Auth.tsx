@@ -92,7 +92,7 @@ export function Auth({ onBack }: Props) {
           {/* Logo */}
           <div className="flex items-center justify-center gap-2.5 mb-8">
             <LanternLogo size={36} />
-            <span className="text-xl font-semibold tracking-tight text-white">Lanterna</span>
+            <span className="text-xl font-semibold tracking-tight text-white">LANTERNA</span>
           </div>
 
           {/* Tab toggle */}

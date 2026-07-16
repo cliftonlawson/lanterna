@@ -63,7 +63,7 @@ export function AppLayout({
           <div className="flex items-center gap-2.5">
             <LanternLogo size={30} />
             <div>
-              <p className="text-sm font-semibold tracking-tight leading-none">Lanterna</p>
+              <p className="text-sm font-semibold tracking-tight leading-none">LANTERNA</p>
               <p className="text-[10px] text-gray-600 mt-0.5 truncate max-w-[130px]">{studioName}</p>
             </div>
           </div>

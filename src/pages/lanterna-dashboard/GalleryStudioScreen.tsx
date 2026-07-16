@@ -20,7 +20,6 @@ import {
   Settings,
   Type,
   Upload,
-  X,
 } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -146,7 +145,20 @@ export function GalleryStudioScreen({
             />
           )}
 
-          {(['layout', 'heading', 'background', 'music', 'styles'] as StudioTab[]).includes(studioTab) && (
+          {studioTab === 'layout' && (
+            <div className="layout-design-column">
+              <DesignPanel
+                activeGallery={activeGallery}
+                design={activeGallery.design}
+                tab={studioTab}
+                workspace={workspace}
+                onBackgroundUpload={onBackgroundUpload}
+                onDesignChange={onDesignChange}
+              />
+            </div>
+          )}
+
+          {(['heading', 'background', 'music', 'styles'] as StudioTab[]).includes(studioTab) && (
             <div className="design-grid">
               <DesignPanel
                 activeGallery={activeGallery}
@@ -156,7 +168,7 @@ export function GalleryStudioScreen({
                 onBackgroundUpload={onBackgroundUpload}
                 onDesignChange={onDesignChange}
               />
-              <LivePreview gallery={activeGallery} workspace={workspace} mobile={studioTab === 'layout'} />
+              <LivePreview gallery={activeGallery} workspace={workspace} />
             </div>
           )}
 
@@ -190,7 +202,7 @@ function StudioNav({
   onStudioTabChange: (tab: StudioTab) => void;
 }) {
   return (
-    <nav className="studio-sidebar">
+    <nav aria-label="Gallery studio sections" className="studio-sidebar">
       <small>Upload</small>
       <button className={subNavClass(studioTab === 'videos')} onClick={() => onStudioTabChange('videos')}><Film size={17} /> Videos <em>{activeGallery.videos}</em></button>
       <button className={subNavClass(studioTab === 'photos')} onClick={() => onStudioTabChange('photos')}><Image size={17} /> Photos <em>{activeGallery.photos}</em></button>
@@ -220,13 +232,7 @@ function VideosTab({
 
   return (
     <>
-      <div className="studio-section-head">
-        <div>
-          <p>Upload</p>
-          <h2>Videos</h2>
-        </div>
-        <span>{activeGallery.videos} {activeGallery.videos === 1 ? 'film' : 'films'} in this gallery</span>
-      </div>
+      <div className="section-line">{activeGallery.videos} {activeGallery.videos === 1 ? 'film' : 'films'} in this gallery</div>
       {activeGallery.videos === 0 ? (
         <div className="studio-empty">
           <LanternLogo size={48} />
@@ -338,6 +344,7 @@ function PhotosTab({
         <button className="dashed" onClick={createAlbum}><Plus size={14} /> New album</button>
         <button className="select-mode" onClick={() => onSelectedPhotosChange(selectedPhotos.length ? [] : activeGallery.photoItems.slice(0, 2).map((photo) => photo.id))}><Check size={14} /> {selectedPhotos.length ? 'Cancel' : 'Select'}</button>
       </div>
+      <div className="section-line">{activeGallery.photos} {activeGallery.photos === 1 ? 'photo' : 'photos'} in this gallery</div>
       <div className={`masonry ${selectedPhotos.length ? 'is-selecting' : ''}`}>
         <button className="add-photo" onClick={onOpenUpload}><Upload size={22} /> Add photos</button>
         {activeGallery.photoItems.map((photo, index) => (
@@ -398,47 +405,46 @@ function DesignPanel({
   };
   const accentPresets = ['#6EE7F9', '#818CF8', '#9CC3E8', '#7BC47F', '#7AA7E8'];
   const currentLayout = galleryLayoutOptions.find((item) => item.variant === design.layout) ?? galleryLayoutOptions[0];
+  if (tab === 'layout') {
+    return (
+      <div className="layout-editor-stack">
+        <section className="current-layout-card">
+          <div className="current-layout-copy">
+            <span>Current layout</span>
+            <h2>{currentLayout.name}</h2>
+            <p>How films are arranged on the client page</p>
+          </div>
+          <button
+            className="primary browse-layouts-button"
+            onClick={() => {
+              setDraftLayout(design.layout);
+              setLayoutBrowserOpen(true);
+            }}
+          >
+            <Layout size={16} /> Browse layouts
+          </button>
+        </section>
+
+        {layoutBrowserOpen && (
+          <LayoutBrowserOverlay
+            activeGallery={activeGallery}
+            draftLayout={draftLayout}
+            workspace={workspace}
+            onClose={() => setLayoutBrowserOpen(false)}
+            onDraftLayoutChange={setDraftLayout}
+            onSave={() => {
+              onDesignChange({ layout: draftLayout });
+              setLayoutBrowserOpen(false);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <Panel title={titles[tab]?.title ?? 'Design'}>
       <p className="design-panel-intro">{titles[tab]?.kicker}</p>
-
-      {tab === 'layout' && (
-        <>
-          <section className="current-layout-card">
-            <div className="current-layout-copy">
-              <span>Current layout</span>
-              <h3>{currentLayout.name}</h3>
-              <p>{currentLayout.meta}</p>
-            </div>
-            <button
-              className="primary browse-layouts-button"
-              onClick={() => {
-                setDraftLayout(design.layout);
-                setLayoutBrowserOpen(true);
-              }}
-            >
-              <Layout size={16} /> Browse layouts
-            </button>
-          </section>
-          <section className="current-layout-preview">
-            <GalleryPreviewFrame gallery={activeGallery} workspace={workspace} className="layout-tab-preview" />
-          </section>
-          {layoutBrowserOpen && (
-            <LayoutBrowserOverlay
-              activeGallery={activeGallery}
-              draftLayout={draftLayout}
-              workspace={workspace}
-              onClose={() => setLayoutBrowserOpen(false)}
-              onDraftLayoutChange={setDraftLayout}
-              onSave={() => {
-                onDesignChange({ layout: draftLayout });
-                setLayoutBrowserOpen(false);
-              }}
-            />
-          )}
-        </>
-      )}
 
       {tab === 'heading' && (
         <div className="design-stack">
@@ -578,38 +584,89 @@ function LayoutBrowserOverlay({
   onDraftLayoutChange: (layout: GalleryDesign['layout']) => void;
   onSave: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusFirst = window.requestAnimationFrame(() => {
+      dialogRef.current?.querySelector<HTMLElement>('button, [role="button"][tabindex="0"]')?.focus();
+    });
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [role="button"][tabindex="0"]',
+      ) ?? []).filter((element) => !element.closest('[inert]'));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!dialogRef.current?.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFirst);
+      document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, []);
+
   return createPortal(
-    <div className="layout-browser-overlay" role="dialog" aria-modal="true" aria-label="Choose layout">
+    <div className="layout-browser-overlay" ref={dialogRef} role="dialog" aria-modal="true" aria-label="Choose layout">
       <header className="layout-browser-header">
-        <button className="layout-browser-back" onClick={onClose}><ArrowLeft size={20} /> Back</button>
+        <button aria-label="Back to layout settings" className="layout-browser-back" onClick={onClose}><ArrowLeft size={20} /></button>
         <div>
-          <h2>Choose Layout</h2>
-          <p>Pick the client-facing gallery arrangement.</p>
+          <h2>Choose a layout</h2>
         </div>
         <div className="layout-browser-actions">
-          <button className="secondary icon-only" onClick={onClose} aria-label="Close layout browser"><X size={18} /></button>
-          <button className="primary" onClick={onSave}><Check size={16} /> Save layout</button>
+          <button className="primary" onClick={onSave}><Check size={16} /> Done</button>
         </div>
       </header>
 
       <main className="layout-browser-body">
-        <h3>Gallery layouts</h3>
+        <h3>Multiple videos</h3>
         <div className="layout-browser-grid">
           {galleryLayoutOptions.map((item) => (
-            <button
+            <div
+              aria-label={`${item.name}: ${item.meta}`}
+              aria-pressed={draftLayout === item.variant}
               className={draftLayout === item.variant ? 'layout-browser-card selected' : 'layout-browser-card'}
               key={item.variant}
               onClick={() => onDraftLayoutChange(item.variant)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                onDraftLayoutChange(item.variant);
+              }}
+              role="button"
+              tabIndex={0}
             >
-              <GalleryPreviewFrame gallery={activeGallery} workspace={workspace} layout={item.variant} className="layout-browser-preview" crop />
+              {draftLayout === item.variant && <div aria-hidden="true" className="layout-browser-selected"><Check size={13} /> Selected</div>}
+              <GalleryPreviewFrame gallery={activeGallery} workspace={workspace} layout={item.variant} className="layout-browser-preview" crop previewOnly />
               <span>{item.name}</span>
               <small>{item.meta}</small>
-            </button>
+            </div>
           ))}
         </div>
       </main>
     </div>,
-    document.body,
+    document.querySelector('.lanterna-app') ?? document.body,
   );
 }
 
@@ -655,7 +712,7 @@ type PreviewModel = {
   url: string;
 };
 
-const handoffTones = ['#C4AE88', '#CDB998', '#C3AF8D', '#BFA983', '#D2C0A0', '#D7C6A6', '#BFA983', '#C8B392'];
+const handoffTones = ['#2F5586', '#536F8F', '#6D4D91', '#324A71', '#3C6B72', '#3C558D', '#2F5586', '#536F8F'];
 const fallbackTitles = ['The Full Film', 'Ceremony', 'Reception', 'First Dance', 'Golden Hour', 'Getting Ready', 'Speeches', '60-Second Teaser'];
 const fallbackDurations = ['6:42', '24:10', '38:55', '4:38', '3:05', '4:20', '8:12', '1:00'];
 const fallbackCategories = ['FEATURE', 'FULL', 'FULL', 'MOMENT', 'MOMENT', 'MOMENT', 'FULL', 'SOCIAL'];
@@ -734,6 +791,7 @@ export function GalleryPreviewFrame({
   mediaUrls,
   publicMode = false,
   onFilmSelect,
+  previewOnly = false,
 }: {
   gallery: DashboardGallery;
   workspace?: WorkspaceAccount;
@@ -743,6 +801,7 @@ export function GalleryPreviewFrame({
   mediaUrls?: Record<string, string>;
   publicMode?: boolean;
   onFilmSelect?: FilmSelectHandler;
+  previewOnly?: boolean;
 }) {
   const previewGallery = layout ? { ...gallery, design: { ...gallery.design, layout } } : gallery;
   const signedMediaUrls = useMediaUrls(mediaUrls ? [] : previewGallery.design.backgroundR2Key ? [previewGallery.design.backgroundR2Key] : []);
@@ -751,8 +810,13 @@ export function GalleryPreviewFrame({
     : '';
   const model = buildPreviewModel(previewGallery, workspace, { mediaUrls, repeatFilms: !publicMode });
   const { design } = previewGallery;
+  const previewRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    if (previewRef.current) previewRef.current.inert = previewOnly;
+  }, [previewOnly]);
 
   useEffect(() => {
     const shell = shellRef.current;
@@ -771,7 +835,9 @@ export function GalleryPreviewFrame({
 
   return (
     <div
+      aria-hidden={previewOnly || undefined}
       className={`client-preview lanterna-preview-frame ${publicMode ? 'is-public' : ''} ${crop ? 'is-crop' : 'has-browser'} layout-${design.layout} ${className}`}
+      ref={previewRef}
       style={{
         ['--client-accent' as string]: design.accent,
         ['--preview-bg' as string]: backgroundUrl ? `url("${backgroundUrl}")` : design.backgroundGradient,
@@ -882,11 +948,11 @@ function buildPreviewModel(gallery: DashboardGallery, workspace?: WorkspaceAccou
   const filmCount = sourceFilms.length && options.repeatFilms === false ? sourceFilms.length : 8;
   const films = Array.from({ length: filmCount }).map((_, index) => {
     const source = sourceFilms[index % Math.max(sourceFilms.length, 1)];
-    const fallbackTone = index === 0 ? '#C4AE88' : handoffTones[index];
+    const fallbackTone = index === 0 ? '#2F5586' : handoffTones[index];
     return {
       category: fallbackCategories[index],
       duration: source?.duration || fallbackDurations[index],
-      gradient: source?.gradient || (index === 0 ? gallery.design.backgroundGradient : `linear-gradient(135deg,${fallbackTone},#7A5632)`),
+      gradient: source?.gradient || (index === 0 ? gallery.design.backgroundGradient : `linear-gradient(135deg,${fallbackTone},#6CC4D8)`),
       id: source ? `${source.id}-preview-${index}` : `preview-film-${index}`,
       paidUnlockEnabled: source?.paidUnlockEnabled,
       paidUnlockLabel: source?.paidUnlockLabel,
@@ -906,11 +972,11 @@ function buildPreviewModel(gallery: DashboardGallery, workspace?: WorkspaceAccou
     posterUrl: undefined,
     sourceVideoId: null,
     title: fallbackTitles[0],
-    tone: '#C4AE88',
+    tone: '#2F5586',
   };
   const reels = [
-    { ...filmAt(7), category: 'REEL', title: 'The Highlight', tone: '#BCA684' },
-    { ...filmAt(3), category: 'REEL', title: 'First Dance', tone: '#CDB998' },
+    { ...filmAt(7), category: 'REEL', title: 'The Highlight', tone: '#3C558D' },
+    { ...filmAt(3), category: 'REEL', title: 'First Dance', tone: '#536F8F' },
   ];
 
   return {
@@ -1244,7 +1310,7 @@ function PlayTriangle({ light = false }: { light?: boolean }) {
 
 function filmStyle(film: PreviewFilm) {
   return {
-    ['--film-image' as string]: film.posterUrl ? `linear-gradient(180deg,rgba(20,12,6,.08),rgba(20,12,6,.42)), url("${film.posterUrl}")` : undefined,
+    ['--film-image' as string]: film.posterUrl ? `linear-gradient(180deg,rgba(8,13,24,.08),rgba(8,13,24,.42)), url("${film.posterUrl}")` : undefined,
     ['--film-tone' as string]: film.tone,
     background: film.gradient,
   };

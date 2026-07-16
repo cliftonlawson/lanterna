@@ -61,7 +61,7 @@ export async function accountForUser(env, userId, fetchImpl = fetch) {
     fetchImpl,
   );
   const accountId = rows?.[0]?.account_id;
-  if (!accountId) throw new Error('No Lanterna account membership found for this user.');
+  if (!accountId) throw new Error('No LANTERNA account membership found for this user.');
   return accountId;
 }
 

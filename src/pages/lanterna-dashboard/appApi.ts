@@ -21,7 +21,7 @@ async function postApi<T>(path: string, body: unknown) {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.error ?? `Lanterna API failed (${response.status})`);
+    throw new Error(payload?.error ?? `LANTERNA API failed (${response.status})`);
   }
 
   return await response.json() as T;

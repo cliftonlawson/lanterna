@@ -22,6 +22,7 @@ import {
   loadDashboardGalleries,
   loadUploadJobs,
   loadWorkspaceAccount,
+  saveDashboardGalleryDesign,
   saveDashboardGalleries,
   saveUploadJobs,
   saveWorkspaceAccount,
@@ -75,10 +76,15 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const gallerySaveQueueRef = useRef(Promise.resolve());
+  const galleriesRef = useRef<DashboardGallery[]>([]);
   const createGalleryRequestRef = useRef(false);
   const uploadAbortControllersRef = useRef(new Map<string, AbortController>());
 
   const activeGallery = galleries.find((gallery) => gallery.id === activeId) ?? galleries[0];
+
+  useEffect(() => {
+    galleriesRef.current = galleries;
+  }, [galleries]);
 
   useEffect(() => {
     let mounted = true;
@@ -184,15 +190,17 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   const commitGalleries = (
     updater: (current: DashboardGallery[]) => DashboardGallery[],
     reason: Parameters<typeof saveDashboardGalleries>[1],
+    designGalleryId?: string,
   ) => {
-    setGalleries((current) => {
-      const next = updater(current);
-      gallerySaveQueueRef.current = gallerySaveQueueRef.current
-        .catch(() => undefined)
-        .then(() => saveDashboardGalleries(next, reason))
-        .then(() => undefined);
-      return next;
-    });
+    const next = updater(galleriesRef.current);
+    galleriesRef.current = next;
+    setGalleries(next);
+    gallerySaveQueueRef.current = gallerySaveQueueRef.current
+      .catch(() => undefined)
+      .then(() => designGalleryId
+        ? saveDashboardGalleryDesign(next, designGalleryId)
+        : saveDashboardGalleries(next, reason))
+      .then(() => undefined);
   };
 
   const showToast = (message: string) => {
@@ -255,7 +263,11 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   };
 
   const updateActiveDesign = (patch: Partial<GalleryDesign>) => {
-    commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? { ...gallery, design: { ...gallery.design, ...patch } } : gallery), 'autosave');
+    commitGalleries(
+      (prev) => prev.map((gallery) => gallery.id === activeGallery.id ? { ...gallery, design: { ...gallery.design, ...patch } } : gallery),
+      'autosave',
+      activeGallery.id,
+    );
   };
 
   const updateActiveGallery = (patch: Partial<DashboardGallery>) => {
@@ -849,7 +861,10 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       )}
 
       {view === 'vendor' && <VendorDashboardScreen workspace={workspace} onWorkspaceChange={updateWorkspace} />}
-      {view === 'account' && <AccountScreen workspace={workspace} />}
+      {view === 'account' && <AccountScreen workspace={workspace} onBack={() => {
+        setFolder(null);
+        setView('galleries');
+      }} />}
 
       {newOpen && (
         <NewGalleryModal

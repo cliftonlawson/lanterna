@@ -1681,7 +1681,7 @@ async function publicGalleryPayload(env, gallery) {
     workspace: {
       accentColor: brandingRow?.accent_color ?? '#6EE7F9',
       customDomain: brandingRow?.custom_domain ?? null,
-      studioName: brandingRow?.studio_name ?? 'Lanterna Studio',
+      studioName: brandingRow?.studio_name ?? 'LANTERNA Studio',
       tagline: brandingRow?.tagline ?? null,
     },
   };
@@ -1861,6 +1861,6 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
 
     return errorJson('API route not found.', 404);
   } catch (error) {
-    return errorJson(error instanceof Error ? error.message : 'Lanterna API request failed.', 400);
+    return errorJson(error instanceof Error ? error.message : 'LANTERNA API request failed.', 400);
   }
 }

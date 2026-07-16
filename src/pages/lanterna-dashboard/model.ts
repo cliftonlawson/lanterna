@@ -153,7 +153,7 @@ export const projectNames: ProjectName[] = ['Weddings', 'Engagements', 'Portrait
 
 export const defaultWorkspaceAccount: WorkspaceAccount = {
   accountId: null,
-  studioName: 'Lanterna Studio',
+  studioName: 'LANTERNA Studio',
   tagline: 'Wedding films, delivered beautifully',
   accentColor: '#6EE7F9',
   defaultDownloads: true,
@@ -172,12 +172,12 @@ export function gbToBytes(gb: number) {
 }
 
 export const mediaTileGradients = [
-  'linear-gradient(135deg,#281628,#86572f 46%,#d8b36c)',
-  'linear-gradient(135deg,#111827,#536f8f 48%,#e7d3a1)',
-  'linear-gradient(135deg,#21152f,#6d4d91 48%,#f1a85f)',
-  'linear-gradient(135deg,#19120f,#714332 48%,#c99655)',
-  'linear-gradient(135deg,#15121f,#516b55 48%,#d6c28a)',
-  'linear-gradient(135deg,#100f16,#8d4a3c 46%,#ffb24d)',
+  'linear-gradient(135deg,#141830,#2f5586 46%,#6cc4d8)',
+  'linear-gradient(135deg,#111827,#536f8f 48%,#a1c8e7)',
+  'linear-gradient(135deg,#161530,#6d4d91 48%,#5fa8f1)',
+  'linear-gradient(135deg,#0f1219,#324a71 48%,#55a0c9)',
+  'linear-gradient(135deg,#0f1520,#3c6b72 48%,#8ac9d6)',
+  'linear-gradient(135deg,#0f1016,#3c558d 46%,#6ee7f9)',
 ];
 
 export function defaultDeliveryDraft(recipients = ''): DeliveryDraft {
