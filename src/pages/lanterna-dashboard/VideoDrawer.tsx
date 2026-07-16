@@ -144,7 +144,6 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
       paidUnlockLabel: video.paidUnlockLabel || video.title,
       paidUnlockPriceCents: video.paidUnlockPriceCents ?? 30000,
       paidUnlockTagline: video.paidUnlockTagline ?? '',
-      paidUnlockTrailer: video.paidUnlockTrailer ?? true,
     });
     if (enabled && !video.paidUnlockEnabled) onShowToast('Marked as a paid unlock');
   };
@@ -377,13 +376,6 @@ export function VideoDrawer({ gallery, publicGalleryBase, videoId, onDeleteVideo
                   />
                 </label>
               </div>
-              <button className="paid-toggle-row" onClick={() => updateVideo({ paidUnlockTrailer: !(video?.paidUnlockTrailer !== false) })}>
-                <span>
-                  <strong>Show a preview trailer while locked</strong>
-                  <em>The tile stays visible with a teaser clip; the full film unlocks after purchase.</em>
-                </span>
-                <i className={video?.paidUnlockTrailer !== false ? 'on' : ''}><b /></i>
-              </button>
               <div className="payout-preview">
                 <span><DollarSign size={20} /></span>
                 <div>

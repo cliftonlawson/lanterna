@@ -429,7 +429,6 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           gradient: mediaTileGradients[videoIndex % mediaTileGradients.length],
           paidUnlockEnabled: false,
           paidUnlockPriceCents: 30000,
-          paidUnlockTrailer: true,
           processingStatus: 'uploading',
           downloadEnabled: activeGallery.allowDownloads,
           visibleInGallery: true,

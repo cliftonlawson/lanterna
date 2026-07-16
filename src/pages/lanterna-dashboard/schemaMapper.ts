@@ -73,7 +73,6 @@ export type VideoRecord = {
   paid_unlock_currency?: string;
   paid_unlock_label?: string | null;
   paid_unlock_tagline?: string | null;
-  paid_unlock_trailer?: boolean;
 };
 
 export type PhotoRecord = {
@@ -287,7 +286,6 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       paid_unlock_currency: 'usd',
       paid_unlock_label: video.paidUnlockLabel ?? null,
       paid_unlock_tagline: video.paidUnlockTagline ?? null,
-      paid_unlock_trailer: video.paidUnlockTrailer ?? true,
     })),
     albums: gallery.albums.map((album, index) => ({
       id: albumDatabaseId(album.id),
@@ -394,7 +392,6 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
       paidUnlockLabel: video.paid_unlock_label ?? undefined,
       paidUnlockPriceCents: video.paid_unlock_price_cents ?? 30000,
       paidUnlockTagline: video.paid_unlock_tagline ?? undefined,
-      paidUnlockTrailer: video.paid_unlock_trailer ?? true,
       updatedAt: 'Updated from Supabase',
     })),
     albums: albums.map((album) => ({

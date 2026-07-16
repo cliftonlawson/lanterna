@@ -631,7 +631,6 @@ export type PreviewFilm = {
   paidUnlockLabel?: string;
   paidUnlockPriceCents?: number;
   paidUnlockTagline?: string;
-  paidUnlockTrailer?: boolean;
   posterUrl?: string;
   sourceVideoId?: string | null;
   title: string;
@@ -893,7 +892,6 @@ function buildPreviewModel(gallery: DashboardGallery, workspace?: WorkspaceAccou
       paidUnlockLabel: source?.paidUnlockLabel,
       paidUnlockPriceCents: source?.paidUnlockPriceCents,
       paidUnlockTagline: source?.paidUnlockTagline,
-      paidUnlockTrailer: source?.paidUnlockTrailer,
       posterUrl: source?.posterR2Key ? options.mediaUrls?.[source.posterR2Key] : undefined,
       sourceVideoId: source?.id ?? null,
       title: source?.title || fallbackTitles[index],

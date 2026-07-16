@@ -70,6 +70,7 @@ Verification: `docs/paid_unlock_spec.md` added 2026-07-07. It documents current 
 
 ### 8a. Paid unlock trailer toggle is not implemented publicly
 The video drawer stores `paid_unlock_trailer` and tells studios the locked tile can show a teaser clip, but the public gallery intentionally withholds playback URLs for locked paid videos and only includes the poster. Decide whether this toggle should be removed from v1 or implemented as a real teaser asset/path.
+Decision implemented 2026-07-15: remove the unfinished trailer toggle and its application payload plumbing from v1. Locked paid films show their poster until purchase; any future trailer feature must select or upload a distinct preview asset and must never reuse the locked master playback URL.
 Done when: the studio UI no longer promises trailer behavior that the public gallery cannot provide, or locked paid videos receive an explicit teaser playback path that does not expose the full film.
 
 ### 9. Stripe test-mode E2E

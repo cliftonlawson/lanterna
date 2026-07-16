@@ -134,7 +134,6 @@ function mergeLocalVideoMonetization(remote: DashboardGallery[], local: Dashboar
           paidUnlockLabel: localVideo.paidUnlockLabel,
           paidUnlockPriceCents: localVideo.paidUnlockPriceCents,
           paidUnlockTagline: localVideo.paidUnlockTagline,
-          paidUnlockTrailer: localVideo.paidUnlockTrailer,
         };
       }),
     };
@@ -149,7 +148,6 @@ function withoutPaidUnlockColumns<T extends Record<string, unknown>>(videos: T[]
     delete schemaVideo.paid_unlock_label;
     delete schemaVideo.paid_unlock_price_cents;
     delete schemaVideo.paid_unlock_tagline;
-    delete schemaVideo.paid_unlock_trailer;
 
     return schemaVideo;
   });
@@ -170,7 +168,6 @@ function editableVideoRows(videos: VideoRecord[]) {
     paid_unlock_currency: video.paid_unlock_currency ?? 'usd',
     paid_unlock_label: video.paid_unlock_label ?? null,
     paid_unlock_tagline: video.paid_unlock_tagline ?? null,
-    paid_unlock_trailer: video.paid_unlock_trailer ?? true,
   }));
 }
 

@@ -11,7 +11,8 @@ The studio enables paid unlocks per video in the video drawer. A paid video keep
 - `paid_unlock_currency`: currently `usd`.
 - `paid_unlock_label`: checkout/product label; falls back to the video title.
 - `paid_unlock_tagline`: checkout/product description; falls back to a gallery bonus-film description.
-- `paid_unlock_trailer`: stored today, but not honored by public playback yet.
+
+Product decision: v1 does not offer locked-film preview trailers. Before purchase, the locked tile uses the video's poster; no playback URL for the full film is exposed. A future trailer feature must use an explicit separate preview asset rather than a boolean against the locked master.
 
 The studio payout model in code is 90% studio payout and 10% Lanterna platform fee. Those values are calculated server-side from `amount_total`.
 
@@ -85,5 +86,4 @@ If refunds become a product surface, add a Stripe refund webhook handler and dec
 
 ## Known Gaps
 
-- `paid_unlock_trailer` is stored and the studio UI promises a locked preview trailer, but public locked videos do not currently receive teaser playback URLs. The locked tile is visible; the film itself is not playable until purchase.
 - Abandoned checkout remains `pending` unless Stripe sends an expiration/failure webhook.

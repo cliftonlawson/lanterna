@@ -61,7 +61,6 @@ export type MediaVideo = {
   paidUnlockLabel?: string;
   paidUnlockPriceCents?: number;
   paidUnlockTagline?: string;
-  paidUnlockTrailer?: boolean;
   streamReady?: boolean;
   streamUid?: string | null;
   webCopyR2Key?: string | null;
