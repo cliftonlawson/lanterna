@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Archive, ArrowLeft, Eye, Film, HardDrive, ListChecks, PanelLeft, Play, Plus, Search, User, MoreHorizontal, RotateCcw } from 'lucide-react';
 import { LanternLogo } from '../../components/LanternLogo';
+import { getMediaUrls, getStreamPlayback } from './appApi';
 import { statusMeta, type DashboardGallery, type ProjectName, type Theme, type WorkspaceAccount } from './model';
 
 type Props = {
@@ -36,6 +37,7 @@ export function AllGalleriesScreen({
   onSignUp,
   onThemeChange,
 }: Props) {
+  const galleryCoverUrls = useGalleryCoverUrls(galleries);
   const scopedGalleries = folder ? galleries.filter((gallery) => gallery.project === folder) : galleries;
   const totalVideos = scopedGalleries.reduce((sum, gallery) => sum + gallery.videos, 0);
   const totalViews = scopedGalleries.reduce((sum, gallery) => sum + parseGalleryViews(gallery.views), 0);
@@ -100,6 +102,7 @@ export function AllGalleriesScreen({
         <div className="gallery-grid">
           {visibleGalleries.map((gallery) => (
             <GalleryCard
+              coverUrls={galleryCoverUrls[gallery.id]}
               gallery={gallery}
               key={gallery.id}
               onArchiveGallery={onArchiveGallery}
@@ -131,17 +134,26 @@ function projectAdjective(folder: ProjectName) {
 }
 
 function GalleryCard({
+  coverUrls = [],
   gallery,
   onArchiveGallery,
   onOpenGallery,
 }: {
+  coverUrls?: string[];
   gallery: DashboardGallery;
   onArchiveGallery: (id: string) => void;
   onOpenGallery: (id: string) => void;
 }) {
   const meta = statusMeta(gallery.status);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [coverIndex, setCoverIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
+  const coverSignature = coverUrls.join('|');
+  const coverUrl = coverUrls[coverIndex];
+
+  useEffect(() => {
+    setCoverIndex(0);
+  }, [coverSignature]);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
@@ -162,6 +174,7 @@ function GalleryCard({
     <article className="gallery-card">
       <button className="gallery-click" onClick={() => onOpenGallery(gallery.id)}>
         <div className="thumb" style={{ background: gallery.gradient }}>
+          {coverUrl && <img alt="" className="gallery-cover-image" key={coverUrl} onError={() => setCoverIndex((index) => index + 1)} src={coverUrl} />}
           <span className="video-pill"><Play size={13} fill="currentColor" /> {gallery.videos} {gallery.videos === 1 ? 'video' : 'videos'}</span>
           <span className={meta.className}>{meta.label}</span>
         </div>
@@ -199,6 +212,65 @@ function GalleryCard({
       </div>
     </article>
   );
+}
+
+function useGalleryCoverUrls(galleries: DashboardGallery[]) {
+  const [coverUrls, setCoverUrls] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    const candidates = galleries.map(galleryCoverCandidate);
+    const r2Keys = candidates.flatMap((candidate) => candidate.r2Keys);
+    const streamCandidates = candidates.filter((candidate) => candidate.streamUid);
+    if (!r2Keys.length && !streamCandidates.length) {
+      setCoverUrls({});
+      return undefined;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const signedR2Urls: Record<string, string> = r2Keys.length
+        ? await getMediaUrls(r2Keys).catch(() => ({}))
+        : {};
+      const streamResults = await Promise.all(streamCandidates.map(async (candidate) => {
+        try {
+          const playback = await getStreamPlayback(candidate.galleryId, [candidate.streamUid!]);
+          return [candidate.galleryId, playback[candidate.streamUid!]?.thumbnailUrl] as const;
+        } catch {
+          return [candidate.galleryId, undefined] as const;
+        }
+      }));
+      if (cancelled) return;
+
+      const nextUrls: Record<string, string[]> = {};
+      candidates.forEach((candidate) => {
+        nextUrls[candidate.galleryId] = candidate.r2Keys
+          .map((r2Key) => signedR2Urls[r2Key])
+          .filter(Boolean);
+      });
+      streamResults.forEach(([galleryId, thumbnailUrl]) => {
+        if (thumbnailUrl) nextUrls[galleryId] = [...(nextUrls[galleryId] ?? []), thumbnailUrl];
+      });
+      setCoverUrls(nextUrls);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [galleries]);
+
+  return coverUrls;
+}
+
+function galleryCoverCandidate(gallery: DashboardGallery) {
+  const backgroundKey = gallery.design.backgroundType === 'image' ? gallery.design.backgroundR2Key : null;
+  const firstVideo = gallery.videoItems[0];
+  const posterKey = firstVideo?.posterR2Key && !/\.tiff?$/i.test(firstVideo.posterR2Key) ? firstVideo.posterR2Key : null;
+  const streamUid = firstVideo?.streamUid && firstVideo.streamReady !== false ? firstVideo.streamUid : null;
+  return {
+    galleryId: gallery.id,
+    r2Keys: [...new Set([backgroundKey, posterKey].filter(Boolean) as string[])],
+    streamUid,
+  };
 }
 
 function Stat({ icon, value, label, tone }: { icon: React.ReactNode; value: string; label: string; tone: 'amber' | 'blue' | 'green' | 'violet' }) {
