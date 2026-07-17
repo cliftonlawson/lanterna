@@ -3,6 +3,6 @@ compatibility_date = "2026-07-01"
 pages_build_output_dir = "dist"
 
 [vars]
-APP_URL = "https://deliver.lanterna.studio"
-PUBLIC_DELIVERY_BASE_URL = "https://deliver.lanterna.studio"
+APP_URL = "https://deliver.lanterna.video"
+PUBLIC_DELIVERY_BASE_URL = "https://deliver.lanterna.video"
 EMAIL_PROVIDER = "resend"
