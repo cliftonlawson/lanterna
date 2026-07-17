@@ -9,11 +9,23 @@ import { PublicGalleryPage } from './pages/PublicGalleryPage';
 
 type Screen = 'landing' | 'auth' | 'dashboard' | 'demo';
 
+const APP_ORIGIN = 'https://app.lanterna.video';
+const DELIVERY_ORIGIN = 'https://deliver.lanterna.video';
+const MARKETING_ORIGIN = 'https://lanterna.video';
+const MARKETING_HOSTS = new Set(['lanterna.video', 'www.lanterna.video']);
+
 function AppInner() {
   const { user, loading } = useAuth();
   const [screen, setScreen] = useState<Screen>(initialScreen);
   const publicSlug = publicGallerySlug();
   const landingRoute = window.location.pathname === '/landing';
+  const redirectTarget = productionRedirectTarget(publicSlug);
+
+  useEffect(() => {
+    if (redirectTarget) {
+      window.location.replace(redirectTarget);
+    }
+  }, [redirectTarget]);
 
   useEffect(() => {
     if (user && window.location.pathname === '/auth') {
@@ -23,6 +35,10 @@ function AppInner() {
       setScreen('dashboard');
     }
   }, [user, screen]);
+
+  if (redirectTarget) {
+    return null;
+  }
 
   if (publicSlug) {
     return <PublicGalleryPage slug={publicSlug} />;
@@ -42,7 +58,27 @@ function AppInner() {
   if (landingRoute && screen === 'landing') {
     return (
       <Landing
-        onGetStarted={() => setScreen('auth')}
+        onGetStarted={() => openAuth('signup', setScreen)}
+        onSignIn={() => openAuth('signin', setScreen)}
+        onTryDemo={() => setScreen('demo')}
+      />
+    );
+  }
+
+  if (isMarketingHost()) {
+    if (screen === 'demo') {
+      return (
+        <DemoDashboard
+          onSignUp={() => openAuth('signup', setScreen)}
+          onBack={() => setScreen('landing')}
+        />
+      );
+    }
+
+    return (
+      <Landing
+        onGetStarted={() => openAuth('signup', setScreen)}
+        onSignIn={() => openAuth('signin', setScreen)}
         onTryDemo={() => setScreen('demo')}
       />
     );
@@ -51,6 +87,10 @@ function AppInner() {
   // Authenticated flow
   if (user) {
     return <Dashboard />;
+  }
+
+  if (window.location.hostname === 'app.lanterna.video') {
+    return <Auth onBack={() => window.location.assign(MARKETING_ORIGIN)} />;
   }
 
   // Demo mode — no auth required
@@ -71,7 +111,8 @@ function AppInner() {
   // Landing page
   return (
     <Landing
-      onGetStarted={() => setScreen('auth')}
+      onGetStarted={() => openAuth('signup', setScreen)}
+      onSignIn={() => openAuth('signin', setScreen)}
       onTryDemo={() => setScreen('demo')}
     />
   );
@@ -88,6 +129,50 @@ function initialScreen(): Screen {
 function publicGallerySlug() {
   const match = window.location.pathname.match(/^\/(?:g|gallery)\/([^/]+)\/?$/);
   return match ? decodeURIComponent(match[1]) : '';
+}
+
+function isMarketingHost() {
+  return MARKETING_HOSTS.has(window.location.hostname);
+}
+
+function openAuth(mode: 'signin' | 'signup', setScreen: (screen: Screen) => void) {
+  if (isProductionHost()) {
+    const query = mode === 'signup' ? '?mode=signup' : '';
+    window.location.assign(`${APP_ORIGIN}/auth${query}`);
+    return;
+  }
+
+  const query = mode === 'signup' ? '?mode=signup' : '';
+  window.history.replaceState({}, '', `/auth${query}`);
+  setScreen('auth');
+}
+
+function isProductionHost() {
+  return isMarketingHost()
+    || window.location.hostname === 'app.lanterna.video'
+    || window.location.hostname === 'deliver.lanterna.video';
+}
+
+function productionRedirectTarget(publicSlug: string) {
+  const { hostname, pathname, search } = window.location;
+  const galleryPath = `${pathname}${search}`;
+
+  if (hostname === 'deliver.lanterna.video') {
+    return publicSlug ? '' : MARKETING_ORIGIN;
+  }
+
+  if (hostname === 'app.lanterna.video') {
+    if (publicSlug) return `${DELIVERY_ORIGIN}${galleryPath}`;
+    if (pathname === '/landing') return MARKETING_ORIGIN;
+    return '';
+  }
+
+  if (MARKETING_HOSTS.has(hostname)) {
+    if (publicSlug) return `${DELIVERY_ORIGIN}${galleryPath}`;
+    if (pathname === '/auth') return `${APP_ORIGIN}${pathname}${search}`;
+  }
+
+  return '';
 }
 
 export default function App() {
