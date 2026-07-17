@@ -187,7 +187,7 @@ export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGalle
                     <button className="upload-queue-action" onClick={(event) => {
                       event.stopPropagation();
                       onRetryVideoPlayback(job.id);
-                    }} type="button"><RefreshCw size={14} /> Retry playback</button>
+                    }} type="button"><RefreshCw size={14} /> Retry preparation</button>
                   ) : canResumeMaster ? (
                     <button className="upload-queue-action" onClick={(event) => {
                       event.stopPropagation();
@@ -261,13 +261,13 @@ function formatFileSize(bytes: number) {
 function uploadStatusLabel(job: UploadJob, canOpenVideo: boolean) {
   if (job.targetType === 'video') {
     if (canOpenVideo || job.uploadPhase === 'ready') return 'Ready · click to edit';
-    if (job.uploadPhase === 'copy_failed') return job.errorMessage || 'Master secured · playback preparation failed';
-    if (job.uploadPhase === 'master_secured' || job.uploadPhase === 'starting_playback') return 'Master secured';
-    if (job.uploadPhase === 'preparing_playback') return 'Preparing playback';
+    if (job.uploadPhase === 'copy_failed') return job.errorMessage || 'Upload complete · video preparation failed';
+    if (job.uploadPhase === 'master_secured' || job.uploadPhase === 'starting_playback') return 'Upload complete';
+    if (job.uploadPhase === 'preparing_playback') return 'Preparing video';
     if (job.uploadPhase === 'uploading_master') {
-      if (job.status === 'paused') return 'Master upload paused';
-      if (job.status === 'errored') return job.errorMessage || 'Master upload interrupted';
-      return 'Uploading master';
+      if (job.status === 'paused') return 'Video upload paused';
+      if (job.status === 'errored') return job.errorMessage || 'Video upload interrupted';
+      return 'Uploading video';
     }
   }
 

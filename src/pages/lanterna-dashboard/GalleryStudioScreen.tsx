@@ -22,9 +22,10 @@ import {
   Upload,
 } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { LanternLogo } from '../../components/LanternLogo';
+import { userMessage } from '../../lib/userMessages';
 import { getMediaUrls } from './appApi';
 import { invalidRecipientEmails } from './delivery';
 import {
@@ -59,6 +60,29 @@ const galleryLayoutOptions: Array<{ name: string; meta: string; variant: Gallery
   { name: 'Salon', meta: 'Curated gallery wall of framed films', variant: 'salon' },
 ];
 
+const layoutPreviewCouples: Record<GalleryDesign['layout'], string> = {
+  lumen: 'Emma & James',
+  diptych: 'Clara & Theo',
+  meridian: 'Maeve & Luca',
+  grove: 'Iris & Bennett',
+  atelier: 'Noa & Rafael',
+  reel: 'Sage & Ellis',
+  overture: 'Avery & Miles',
+  passage: 'June & Atlas',
+  salon: 'Lina & Ezra',
+};
+
+function galleryForLayoutPreview(gallery: DashboardGallery, layout: GalleryDesign['layout']): DashboardGallery {
+  return {
+    ...gallery,
+    design: {
+      ...gallery.design,
+      layout,
+      title: layoutPreviewCouples[layout],
+    },
+  };
+}
+
 type Props = {
   activeGallery: DashboardGallery;
   selectedPhotos: string[];
@@ -69,6 +93,7 @@ type Props = {
   onGalleryChange: (patch: Partial<DashboardGallery>) => void;
   onGalleryAccessChange: (access: DashboardGallery['access'], password?: string) => Promise<void>;
   onBackgroundUpload: (file: File) => void;
+  onMusicUpload: (file: File) => Promise<void>;
   onOpenUpload: () => void;
   onSelectedPhotosChange: (selected: string[]) => void;
   onSendDelivery: () => void;
@@ -87,6 +112,7 @@ export function GalleryStudioScreen({
   onGalleryChange,
   onGalleryAccessChange,
   onBackgroundUpload,
+  onMusicUpload,
   onOpenUpload,
   onSelectedPhotosChange,
   onSendDelivery,
@@ -102,7 +128,7 @@ export function GalleryStudioScreen({
       label: activeGallery.access === 'Password' ? (activeGallery.passwordSet ? 'Password is set' : 'Set gallery password') : 'Access is set',
     },
     { ok: activeGallery.videos > 0, label: activeGallery.videos > 0 ? `${activeGallery.videos} films added` : 'Add at least one film' },
-    { ok: activeGallery.coverChosen, label: activeGallery.coverChosen ? 'Cover selected' : 'Choose a cover' },
+    { ok: activeGallery.videos > 0, label: activeGallery.coverChosen ? 'Cover selected' : 'First film will be the cover' },
     { ok: activeGallery.deliveryDraft.recipients.trim().length > 0, label: activeGallery.deliveryDraft.recipients.trim() ? 'Recipients added' : 'Add recipients' },
     { ok: invalidRecipients.length === 0, label: invalidRecipients.length ? `Fix ${invalidRecipients[0]}` : 'Recipient emails valid' },
   ];
@@ -153,6 +179,7 @@ export function GalleryStudioScreen({
                 tab={studioTab}
                 workspace={workspace}
                 onBackgroundUpload={onBackgroundUpload}
+                onMusicUpload={onMusicUpload}
                 onDesignChange={onDesignChange}
               />
             </div>
@@ -166,6 +193,7 @@ export function GalleryStudioScreen({
                 tab={studioTab}
                 workspace={workspace}
                 onBackgroundUpload={onBackgroundUpload}
+                onMusicUpload={onMusicUpload}
                 onDesignChange={onDesignChange}
               />
               <LivePreview gallery={activeGallery} workspace={workspace} />
@@ -282,7 +310,7 @@ function VideosTab({
 
 function videoStatusLabel(status: DashboardGallery['videoItems'][number]['processingStatus']) {
   if (status === 'uploading') return 'Uploading replacement';
-  if (status === 'processing') return 'Encoding replacement';
+  if (status === 'processing') return 'Preparing replacement';
   if (status === 'errored') return 'Needs attention';
   return 'Ready';
 }
@@ -384,6 +412,7 @@ function DesignPanel({
   tab,
   workspace,
   onBackgroundUpload,
+  onMusicUpload,
   onDesignChange,
 }: {
   activeGallery: DashboardGallery;
@@ -391,9 +420,14 @@ function DesignPanel({
   tab: StudioTab;
   workspace: WorkspaceAccount;
   onBackgroundUpload: (file: File) => void;
+  onMusicUpload: (file: File) => Promise<void>;
   onDesignChange: (patch: Partial<GalleryDesign>) => void;
 }) {
   const backgroundInputRef = useRef<HTMLInputElement | null>(null);
+  const musicInputRef = useRef<HTMLInputElement | null>(null);
+  const [musicUploading, setMusicUploading] = useState(false);
+  const musicMediaUrls = useMediaUrls(design.musicTrackR2Key ? [design.musicTrackR2Key] : []);
+  const musicUrl = design.musicTrackR2Key ? musicMediaUrls[design.musicTrackR2Key] : '';
   const [layoutBrowserOpen, setLayoutBrowserOpen] = useState(false);
   const [draftLayout, setDraftLayout] = useState<GalleryDesign['layout']>(design.layout);
   const titles: Record<string, { title: string; kicker: string }> = {
@@ -405,6 +439,7 @@ function DesignPanel({
   };
   const accentPresets = ['#6EE7F9', '#818CF8', '#9CC3E8', '#7BC47F', '#7AA7E8'];
   const currentLayout = galleryLayoutOptions.find((item) => item.variant === design.layout) ?? galleryLayoutOptions[0];
+  const currentLayoutPreviewGallery = galleryForLayoutPreview(activeGallery, design.layout);
   if (tab === 'layout') {
     return (
       <div className="layout-editor-stack">
@@ -423,6 +458,20 @@ function DesignPanel({
           >
             <Layout size={16} /> Browse layouts
           </button>
+        </section>
+
+        <section className="selected-layout-preview-card" aria-label={`${currentLayout.name} selected layout preview`}>
+          <div className="selected-layout-preview-heading">
+            <span>Selected preview</span>
+            <strong>{layoutPreviewCouples[design.layout]}</strong>
+          </div>
+          <GalleryPreviewFrame
+            gallery={currentLayoutPreviewGallery}
+            workspace={workspace}
+            className="selected-layout-preview"
+            crop
+            previewOnly
+          />
         </section>
 
         {layoutBrowserOpen && (
@@ -469,7 +518,7 @@ function DesignPanel({
               event.currentTarget.value = '';
             }}
           />
-          <button className="upload-mini" onClick={() => backgroundInputRef.current?.click()}><Upload size={20} /><span>Upload background image<small>{design.backgroundR2Key ? 'Current image saved to R2' : 'JPG or PNG recommended'}</small></span></button>
+          <button className="upload-mini" onClick={() => backgroundInputRef.current?.click()}><Upload size={20} /><span>Upload background image<small>{design.backgroundR2Key ? 'Background image ready' : 'JPG or PNG recommended'}</small></span></button>
           <div className="sample-row">
             {mediaTileGradients.slice(0, 4).map((gradient, index) => (
               <button key={gradient} className={design.backgroundGradient === gradient ? 'selected' : ''} style={{ background: gradient }} onClick={() => onDesignChange({ backgroundGradient: gradient })} aria-label={`Background option ${index + 1}`} />
@@ -480,7 +529,26 @@ function DesignPanel({
 
       {tab === 'music' && (
         <div className="design-stack">
-          <button className="music-row"><Music size={18} /><span>{design.musicTrack}<small>Uploaded track</small></span><strong>Replace</strong></button>
+          <input
+            ref={musicInputRef}
+            type="file"
+            accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg"
+            className="visually-hidden"
+            disabled={musicUploading}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = '';
+              if (!file) return;
+              setMusicUploading(true);
+              void onMusicUpload(file).finally(() => setMusicUploading(false));
+            }}
+          />
+          <button className="music-row" disabled={musicUploading} onClick={() => musicInputRef.current?.click()}>
+            <Music aria-hidden="true" size={18} />
+            <span>{design.musicTrackName || 'Upload background music'}<small>{design.musicTrackR2Key ? 'Ready for the client gallery' : 'MP3, WAV, M4A, AAC, or OGG'}</small></span>
+            <strong>{musicUploading ? 'Uploading…' : design.musicTrackR2Key ? 'Replace' : 'Upload'}</strong>
+          </button>
+          {musicUrl && <audio aria-label={`Preview ${design.musicTrackName || 'background music'}`} className="music-preview-player" controls preload="metadata" src={musicUrl} />}
           <label>
             Featured film
             <select value={design.featuredFilm} onChange={(event) => onDesignChange({ featuredFilm: event.target.value })}>
@@ -658,7 +726,7 @@ function LayoutBrowserOverlay({
               tabIndex={0}
             >
               {draftLayout === item.variant && <div aria-hidden="true" className="layout-browser-selected"><Check size={13} /> Selected</div>}
-              <GalleryPreviewFrame gallery={activeGallery} workspace={workspace} layout={item.variant} className="layout-browser-preview" crop previewOnly />
+              <GalleryPreviewFrame gallery={galleryForLayoutPreview(activeGallery, item.variant)} workspace={workspace} className="layout-browser-preview" crop previewOnly />
               <span>{item.name}</span>
               <small>{item.meta}</small>
             </div>
@@ -695,18 +763,34 @@ export type PreviewFilm = {
 };
 
 type FilmSelectHandler = (film: PreviewFilm) => void;
+type GalleryActionHandler = (action: string) => void;
+type GalleryActionContextValue = {
+  labels?: Record<string, string>;
+  onAction: GalleryActionHandler;
+};
+
+const GalleryActionContext = createContext<GalleryActionContextValue | null>(null);
 
 type PreviewModel = {
   actions: string[];
   chapters: Array<{ blurb: string; duration: string; film: PreviewFilm; time: string; title: string }>;
+  collectionLabel: string;
   couple: string;
   dateLabel: string;
+  editionLabel: string;
   films: PreviewFilm[];
   eyebrow: string;
+  hasPhotoTab: boolean;
   locationLabel: string;
   metaLabel: string;
+  occasionLabel: string;
+  passageLabel: string;
+  playAllLabel: string;
   pullQuote: string;
+  reelCountLabel: string;
+  reelHeading: string;
   reels: PreviewFilm[];
+  sampleMode: boolean;
   studioName: string;
   subtitle: string;
   url: string;
@@ -741,6 +825,14 @@ function useMediaUrls(keys: string[]) {
   }, [stableKey]);
 
   return urls;
+}
+
+function galleryPreviewMediaKeys(gallery: DashboardGallery) {
+  const backgroundKey = gallery.design.backgroundType === 'image' ? gallery.design.backgroundR2Key : null;
+  const posterKeys = gallery.videoItems
+    .map((video) => video.posterR2Key)
+    .filter((key): key is string => typeof key === 'string' && !/\.tiff?($|\?)/i.test(key));
+  return [backgroundKey, ...posterKeys].filter((key): key is string => Boolean(key));
 }
 
 function fontLinkId(href: string) {
@@ -790,6 +882,8 @@ export function GalleryPreviewFrame({
   crop = false,
   mediaUrls,
   publicMode = false,
+  actionLabels,
+  onAction,
   onFilmSelect,
   previewOnly = false,
 }: {
@@ -800,15 +894,19 @@ export function GalleryPreviewFrame({
   crop?: boolean;
   mediaUrls?: Record<string, string>;
   publicMode?: boolean;
+  actionLabels?: Record<string, string>;
+  onAction?: GalleryActionHandler;
   onFilmSelect?: FilmSelectHandler;
   previewOnly?: boolean;
 }) {
   const previewGallery = layout ? { ...gallery, design: { ...gallery.design, layout } } : gallery;
-  const signedMediaUrls = useMediaUrls(mediaUrls ? [] : previewGallery.design.backgroundR2Key ? [previewGallery.design.backgroundR2Key] : []);
-  const backgroundUrl = previewGallery.design.backgroundR2Key
-    ? (mediaUrls?.[previewGallery.design.backgroundR2Key] ?? signedMediaUrls[previewGallery.design.backgroundR2Key])
+  const backgroundKey = previewGallery.design.backgroundType === 'image' ? previewGallery.design.backgroundR2Key : null;
+  const signedMediaUrls = useMediaUrls(mediaUrls ? [] : galleryPreviewMediaKeys(previewGallery));
+  const resolvedMediaUrls = mediaUrls ?? signedMediaUrls;
+  const backgroundUrl = backgroundKey
+    ? resolvedMediaUrls[backgroundKey]
     : '';
-  const model = buildPreviewModel(previewGallery, workspace, { mediaUrls, repeatFilms: !publicMode });
+  const model = buildPreviewModel(previewGallery, workspace, { mediaUrls: resolvedMediaUrls, repeatFilms: previewOnly });
   const { design } = previewGallery;
   const previewRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -836,7 +934,7 @@ export function GalleryPreviewFrame({
   return (
     <div
       aria-hidden={previewOnly || undefined}
-      className={`client-preview lanterna-preview-frame ${publicMode ? 'is-public' : ''} ${crop ? 'is-crop' : 'has-browser'} layout-${design.layout} ${className}`}
+      className={`client-preview lanterna-preview-frame ${publicMode ? 'is-public' : ''} ${backgroundUrl ? 'has-background-image' : ''} ${crop ? 'is-crop' : 'has-browser'} layout-${design.layout} ${className}`}
       ref={previewRef}
       style={{
         ['--client-accent' as string]: design.accent,
@@ -852,7 +950,9 @@ export function GalleryPreviewFrame({
         </div>
       )}
       <div className="lg-content-shell" ref={shellRef} style={{ ['--preview-scale' as string]: scale }}>
-        <GalleryTemplatePreview gallery={previewGallery} model={model} onFilmSelect={onFilmSelect} />
+        <GalleryActionContext.Provider value={onAction ? { labels: actionLabels, onAction } : null}>
+          <GalleryTemplatePreview gallery={previewGallery} model={model} onFilmSelect={onFilmSelect} />
+        </GalleryActionContext.Provider>
       </div>
     </div>
   );
@@ -865,6 +965,8 @@ export function GalleryMobilePreviewFrame({
   className = '',
   mediaUrls,
   publicMode = false,
+  actionLabels,
+  onAction,
   onFilmSelect,
 }: {
   gallery: DashboardGallery;
@@ -873,14 +975,18 @@ export function GalleryMobilePreviewFrame({
   className?: string;
   mediaUrls?: Record<string, string>;
   publicMode?: boolean;
+  actionLabels?: Record<string, string>;
+  onAction?: GalleryActionHandler;
   onFilmSelect?: FilmSelectHandler;
 }) {
   const previewGallery = layout ? { ...gallery, design: { ...gallery.design, layout } } : gallery;
-  const signedMediaUrls = useMediaUrls(mediaUrls ? [] : previewGallery.design.backgroundR2Key ? [previewGallery.design.backgroundR2Key] : []);
-  const backgroundUrl = previewGallery.design.backgroundR2Key
-    ? (mediaUrls?.[previewGallery.design.backgroundR2Key] ?? signedMediaUrls[previewGallery.design.backgroundR2Key])
+  const backgroundKey = previewGallery.design.backgroundType === 'image' ? previewGallery.design.backgroundR2Key : null;
+  const signedMediaUrls = useMediaUrls(mediaUrls ? [] : galleryPreviewMediaKeys(previewGallery));
+  const resolvedMediaUrls = mediaUrls ?? signedMediaUrls;
+  const backgroundUrl = backgroundKey
+    ? resolvedMediaUrls[backgroundKey]
     : '';
-  const model = buildPreviewModel(previewGallery, workspace, { mediaUrls, repeatFilms: !publicMode });
+  const model = buildPreviewModel(previewGallery, workspace, { mediaUrls: resolvedMediaUrls, repeatFilms: false });
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
 
@@ -901,7 +1007,7 @@ export function GalleryMobilePreviewFrame({
   if (publicMode) {
     return (
       <div
-        className={`mobile-preview-stage is-public ${className}`}
+        className={`mobile-preview-stage is-public ${backgroundUrl ? 'has-background-image' : ''} ${className}`}
         style={{
           ['--preview-bg' as string]: backgroundUrl ? `url("${backgroundUrl}")` : previewGallery.design.backgroundGradient,
           ...fontPreviewVars(previewGallery.design),
@@ -909,7 +1015,9 @@ export function GalleryMobilePreviewFrame({
       >
         <GoogleFontLoader design={previewGallery.design} />
         <div className="public-mobile-screen">
-          <GalleryMobileTemplate gallery={previewGallery} model={model} onFilmSelect={onFilmSelect} />
+          <GalleryActionContext.Provider value={onAction ? { labels: actionLabels, onAction } : null}>
+            <GalleryMobileTemplate gallery={previewGallery} model={model} onFilmSelect={onFilmSelect} />
+          </GalleryActionContext.Provider>
         </div>
       </div>
     );
@@ -917,7 +1025,7 @@ export function GalleryMobilePreviewFrame({
 
   return (
     <div
-      className={`mobile-preview-stage ${className}`}
+      className={`mobile-preview-stage ${backgroundUrl ? 'has-background-image' : ''} ${className}`}
       ref={stageRef}
       style={{
         height: 644 * scale,
@@ -937,68 +1045,85 @@ export function GalleryMobilePreviewFrame({
 }
 
 function buildPreviewModel(gallery: DashboardGallery, workspace?: WorkspaceAccount, options: { mediaUrls?: Record<string, string>; repeatFilms?: boolean } = {}): PreviewModel {
-  const studioName = workspace?.studioName || 'Nightingale Films';
+  const sampleMode = options.repeatFilms === true;
+  const studioName = workspace?.studioName || (sampleMode ? 'Nightingale Films' : 'LANTERNA');
   const customDomain = displayDomain(workspace?.customDomain || 'lanterna.film');
-  const title = gallery.design.title || gallery.name || 'Emma & James';
+  const title = gallery.design.title || gallery.name || (sampleMode ? 'Emma & James' : 'Untitled gallery');
   const subtitle = gallery.design.subtitle.trim();
-  const dateLabel = gallery.date === 'Just now' ? '14 June 2025' : gallery.date;
+  const dateLabel = gallery.date === 'Just now' ? (sampleMode ? '14 June 2025' : '') : gallery.date;
   const locationLabel = subtitle.includes('·') ? subtitle.split('·').slice(1).join('·').trim() : subtitle;
   const metaLabel = [dateLabel, locationLabel].filter(Boolean).join(' · ');
-  const sourceFilms = gallery.videoItems.length ? gallery.videoItems : [];
-  const filmCount = sourceFilms.length && options.repeatFilms === false ? sourceFilms.length : 8;
+  const sourceFilms = gallery.videoItems;
+  const filmCount = sampleMode ? 8 : sourceFilms.length;
   const films = Array.from({ length: filmCount }).map((_, index) => {
     const source = sourceFilms[index % Math.max(sourceFilms.length, 1)];
+    const syntheticRepeat = sampleMode && index >= sourceFilms.length;
     const fallbackTone = index === 0 ? '#2F5586' : handoffTones[index];
     return {
-      category: fallbackCategories[index],
-      duration: source?.duration || fallbackDurations[index],
+      category: sampleMode ? fallbackCategories[index] : 'FILM',
+      duration: source?.duration || (sampleMode ? fallbackDurations[index] : ''),
       gradient: source?.gradient || (index === 0 ? gallery.design.backgroundGradient : `linear-gradient(135deg,${fallbackTone},#6CC4D8)`),
       id: source ? `${source.id}-preview-${index}` : `preview-film-${index}`,
       paidUnlockEnabled: source?.paidUnlockEnabled,
       paidUnlockLabel: source?.paidUnlockLabel,
       paidUnlockPriceCents: source?.paidUnlockPriceCents,
       paidUnlockTagline: source?.paidUnlockTagline,
-      posterUrl: source?.posterR2Key ? options.mediaUrls?.[source.posterR2Key] : undefined,
+      posterUrl: !syntheticRepeat && source?.posterR2Key ? options.mediaUrls?.[source.posterR2Key] : undefined,
       sourceVideoId: source?.id ?? null,
-      title: source?.title || fallbackTitles[index],
+      title: source?.title || (sampleMode ? fallbackTitles[index] : `Film ${index + 1}`),
       tone: fallbackTone,
     };
   });
-  const filmAt = (index: number) => films[index] ?? films[films.length - 1] ?? {
-    category: fallbackCategories[0],
-    duration: fallbackDurations[0],
-    gradient: gallery.design.backgroundGradient,
-    id: 'preview-film-fallback',
-    posterUrl: undefined,
-    sourceVideoId: null,
-    title: fallbackTitles[0],
-    tone: '#2F5586',
-  };
-  const reels = [
-    { ...filmAt(7), category: 'REEL', title: 'The Highlight', tone: '#3C558D' },
-    { ...filmAt(3), category: 'REEL', title: 'First Dance', tone: '#536F8F' },
-  ];
+  const filmAt = (index: number) => films[index] ?? films[films.length - 1];
+  const reels = sampleMode
+    ? [
+      { ...filmAt(7), category: 'REEL', title: 'The Highlight', tone: '#3C558D' },
+      { ...filmAt(3), category: 'REEL', title: 'First Dance', tone: '#536F8F' },
+    ]
+    : films.slice(1);
+  const chapters = sampleMode
+    ? [
+      { blurb: 'Quiet morning light, the dress, the letters', duration: filmAt(5).duration, film: filmAt(5), time: '11:00 AM', title: 'Getting Ready' },
+      { blurb: 'Vows beneath the pergola, not a dry eye', duration: filmAt(1).duration, film: filmAt(1), time: '3:00 PM', title: 'The Ceremony' },
+      { blurb: 'Portraits along the Amalfi cliffs', duration: filmAt(4).duration, film: filmAt(4), time: '7:30 PM', title: 'Golden Hour' },
+      { blurb: 'First dance, speeches, sparklers till midnight', duration: filmAt(2).duration, film: filmAt(2), time: '9:00 PM', title: 'The Reception' },
+    ]
+    : films.map((film, index) => ({
+      blurb: '',
+      duration: film.duration,
+      film,
+      time: `FILM ${String(index + 1).padStart(2, '0')}`,
+      title: film.title,
+    }));
+  const filmCountLabel = `${films.length} ${films.length === 1 ? 'film' : 'films'}`;
+  const occasionLabel = gallery.project === 'Engagements'
+    ? 'The Engagement Of'
+    : gallery.project === 'Portraits' ? 'Portrait Film' : 'The Wedding Of';
 
   return {
     actions: [
       gallery.design.topButtons.share ? 'Share' : '',
       gallery.design.topButtons.embed ? 'Embed' : '',
-      gallery.design.topButtons.download ? 'Download' : '',
+      gallery.design.topButtons.download && gallery.allowDownloads && gallery.videoItems.some((video) => video.downloadEnabled) ? 'Download' : '',
     ].filter(Boolean),
-    chapters: [
-      { blurb: 'Quiet morning light, the dress, the letters', duration: filmAt(5).duration, film: filmAt(5), time: '11:00 AM', title: 'Getting Ready' },
-      { blurb: 'Vows beneath the pergola, not a dry eye', duration: filmAt(1).duration, film: filmAt(1), time: '3:00 PM', title: 'The Ceremony' },
-      { blurb: 'Portraits along the Amalfi cliffs', duration: filmAt(4).duration, film: filmAt(4), time: '7:30 PM', title: 'Golden Hour' },
-      { blurb: 'First dance, speeches, sparklers till midnight', duration: filmAt(2).duration, film: filmAt(2), time: '9:00 PM', title: 'The Reception' },
-    ],
+    chapters,
+    collectionLabel: sampleMode ? 'Four films in this collection' : `${filmCountLabel} in this collection`,
     couple: title,
     dateLabel,
+    editionLabel: sampleMode ? 'Ravello · MMXXV · Vol.14' : metaLabel,
     eyebrow: gallery.design.eyebrow.trim(),
     films,
+    hasPhotoTab: sampleMode,
     locationLabel,
     metaLabel,
-    pullQuote: 'Six hours of film, distilled into the six minutes we will play every anniversary.',
+    occasionLabel,
+    passageLabel: sampleMode ? `A film in four movements · ${dateLabel} · Ravello` : [filmCountLabel, dateLabel, locationLabel].filter(Boolean).join(' · '),
+    playAllLabel: films.length === 1 ? 'Play Film' : 'Play All Films',
+    pullQuote: sampleMode ? 'Six hours of film, distilled into the six minutes we will play every anniversary.' : '',
+    reelCountLabel: sampleMode ? '1 / 5' : String(reels.length),
+    reelHeading: sampleMode ? 'Social Reels' : 'More Films',
     reels,
+    sampleMode,
     studioName,
     subtitle,
     url: `${customDomain}/${gallery.id}`,
@@ -1006,6 +1131,7 @@ function buildPreviewModel(gallery: DashboardGallery, workspace?: WorkspaceAccou
 }
 
 function GalleryTemplatePreview({ gallery, model, onFilmSelect }: { gallery: DashboardGallery; model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
+  if (!model.films.length) return <GalleryEmptyTemplate model={model} />;
   const layout = gallery.design.layout;
 
   if (layout === 'diptych') return <DiptychTemplate model={model} onFilmSelect={onFilmSelect} />;
@@ -1020,6 +1146,7 @@ function GalleryTemplatePreview({ gallery, model, onFilmSelect }: { gallery: Das
 }
 
 function GalleryMobileTemplate({ gallery, model, onFilmSelect }: { gallery: DashboardGallery; model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
+  if (!model.films.length) return <GalleryMobileEmptyTemplate model={model} />;
   const layout = gallery.design.layout;
 
   if (layout === 'diptych') return <MobileDiptychTemplate model={model} onFilmSelect={onFilmSelect} />;
@@ -1031,6 +1158,24 @@ function GalleryMobileTemplate({ gallery, model, onFilmSelect }: { gallery: Dash
   if (layout === 'passage') return <MobilePassageTemplate model={model} onFilmSelect={onFilmSelect} />;
   if (layout === 'salon') return <MobileSalonTemplate model={model} onFilmSelect={onFilmSelect} />;
   return <MobileLumenTemplate model={model} onFilmSelect={onFilmSelect} />;
+}
+
+function GalleryEmptyTemplate({ model }: { model: PreviewModel }) {
+  return (
+    <main className="lg-template lg-empty-gallery">
+      <BrandMark studioName={model.studioName} />
+      <section><h2>{model.couple}</h2><p>No films have been added to this gallery.</p></section>
+    </main>
+  );
+}
+
+function GalleryMobileEmptyTemplate({ model }: { model: PreviewModel }) {
+  return (
+    <main className="lm-template lm-empty-gallery">
+      <BrandMark studioName={model.studioName} />
+      <section><h2>{model.couple}</h2><p>No films have been added to this gallery.</p></section>
+    </main>
+  );
 }
 
 function MobileTopBar({ dark = false, model }: { dark?: boolean; model: PreviewModel }) {
@@ -1049,7 +1194,7 @@ function MobileLumenTemplate({ model, onFilmSelect }: { model: PreviewModel; onF
       <section className="lm-hero-copy">
         {model.eyebrow && <small>{model.eyebrow}</small>}
         <h2>{model.couple}</h2>
-        <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle /> Play All Films</button>
+        <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle /> {model.playAllLabel}</button>
         {model.metaLabel && <span>{model.metaLabel}</span>}
       </section>
       <section className="lm-film-stack">{model.films.slice(0, 3).map((film, index) => <FilmCard active={index === 0} film={film} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
@@ -1074,10 +1219,10 @@ function MobileMeridianTemplate({ model, onFilmSelect }: { model: PreviewModel; 
     <main className="lm-template lm-meridian">
       <MobileTopBar model={model} />
       <section className="lm-centered">
-        <small>The Wedding Of</small>
+        <small>{model.occasionLabel}</small>
         <h2>{model.couple}</h2>
         <p>{model.dateLabel}</p>
-        <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle light /> Play All Films</button>
+        <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle light /> {model.playAllLabel}</button>
       </section>
       <section className="lm-film-stack">{model.films.slice(0, 2).map((film) => <FilmCard film={film} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
@@ -1099,8 +1244,8 @@ function MobileGroveTemplate({ model, onFilmSelect }: { model: PreviewModel; onF
 function MobileAtelierTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
   return (
     <main className="lm-template lm-atelier">
-      <header><BrandMark studioName={model.studioName} /><span>Ravello · MMXXV</span></header>
-      <section><small>Ravello · Vol.14</small><h2>{model.couple}</h2><p>{model.pullQuote}</p></section>
+      <header><BrandMark studioName={model.studioName} />{model.editionLabel && <span>{model.editionLabel}</span>}</header>
+      <section>{model.editionLabel && <small>{model.editionLabel}</small>}<h2>{model.couple}</h2>{model.pullQuote && <p>{model.pullQuote}</p>}</section>
       <section className="lm-bento">{model.films.slice(0, 5).map((film, index) => <FilmBento film={film} index={index} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
   );
@@ -1113,8 +1258,8 @@ function MobileReelTemplate({ model, onFilmSelect }: { model: PreviewModel; onFi
       <section className="lm-player still" style={filmStyle(model.films[0])}>
         <div><small>Feature Film</small><h2>{model.couple}</h2><button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle /> Play Film</button></div>
       </section>
-      <strong>Social Reels <b>1 / 5</b></strong>
-      <section className="lm-reels">{model.reels.map((film, index) => <ReelCard film={film} index={index} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
+      {model.reels.length > 0 && <strong>{model.reelHeading} <b>{model.reelCountLabel}</b></strong>}
+      {model.reels.length > 0 && <section className="lm-reels">{model.reels.map((film, index) => <ReelCard film={film} index={index} key={film.id} onFilmSelect={onFilmSelect} />)}</section>}
     </main>
   );
 }
@@ -1122,7 +1267,7 @@ function MobileReelTemplate({ model, onFilmSelect }: { model: PreviewModel; onFi
 function MobileOvertureTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
   return (
     <main className="lm-template lm-overture">
-      <small>Nightingale Films Presents</small>
+      <small>{model.studioName} Presents</small>
       <section className="lm-poster still" style={filmStyle(model.films[0])}>
         <span className="lg-play-circle"><PlayTriangle /></span>
         <h2>{model.couple.replace('&', 'and')}</h2>
@@ -1138,9 +1283,9 @@ function MobilePassageTemplate({ model, onFilmSelect }: { model: PreviewModel; o
     <main className="lm-template lm-passage">
       <BrandMark studioName={model.studioName} />
       <h2>{model.couple}</h2>
-      <p>A film in four movements · {model.dateLabel}</p>
-      <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle light /> Play the Full Film</button>
-      <section className="lm-timeline">{model.chapters.map((chapter) => <TimelineStation chapter={chapter} key={chapter.title} onFilmSelect={onFilmSelect} />)}</section>
+      {model.passageLabel && <p>{model.passageLabel}</p>}
+      <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle light /> {model.playAllLabel}</button>
+      <section className="lm-timeline">{model.chapters.map((chapter) => <TimelineStation chapter={chapter} key={chapter.film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
   );
 }
@@ -1148,7 +1293,7 @@ function MobilePassageTemplate({ model, onFilmSelect }: { model: PreviewModel; o
 function MobileSalonTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
   return (
     <main className="lm-template lm-salon">
-      <header><BrandMark studioName={model.studioName} /><SegmentedTabs /></header>
+      <header><BrandMark studioName={model.studioName} /><SegmentedTabs showPhotos={model.hasPhotoTab} /></header>
       <h2>{model.couple}</h2>
       <section className="lm-salon-wall">{model.films.slice(0, 4).map((film, index) => <SalonPrint feature={index === 0} film={film} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
@@ -1158,12 +1303,12 @@ function MobileSalonTemplate({ model, onFilmSelect }: { model: PreviewModel; onF
 function LumenTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
   return (
     <main className="lg-template lg-lumen">
-      <div className="lg-faint-label">Feature Film · 16:9</div>
+      {model.sampleMode && <div className="lg-faint-label">Feature Film · 16:9</div>}
       <div className="lg-lumen-top"><BrandMark studioName={model.studioName} dark /><ActionDots actions={model.actions} /></div>
       <section className="lg-lumen-title">
         {model.eyebrow && <small>{model.eyebrow}</small>}
         <h2>{model.couple}</h2>
-        <div><button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle /> Play All Films</button>{model.metaLabel && <span>{model.metaLabel}</span>}</div>
+        <div><button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle /> {model.playAllLabel}</button>{model.metaLabel && <span>{model.metaLabel}</span>}</div>
       </section>
       <section className="lg-lumen-films">{model.films.slice(0, 3).map((film, index) => <FilmCard active={index === 0} film={film} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
@@ -1184,7 +1329,7 @@ function DiptychTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmS
       </section>
       <section className="lg-diptych-list">
         <header><h3>The Films</h3><ActionDots actions={model.actions} light /></header>
-        <p>Four films in this collection</p>
+        <p>{model.collectionLabel}</p>
         {model.films.slice(0, 4).map((film, index) => <FilmRow active={index === 0} film={film} key={film.id} onFilmSelect={onFilmSelect} />)}
       </section>
     </main>
@@ -1194,12 +1339,12 @@ function DiptychTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmS
 function MeridianTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
   return (
     <main className="lg-template lg-meridian">
-      <header><BrandMark studioName={model.studioName} /><SegmentedTabs /><ActionDots actions={model.actions} light /></header>
+      <header><BrandMark studioName={model.studioName} /><SegmentedTabs showPhotos={model.hasPhotoTab} /><ActionDots actions={model.actions} light /></header>
       <section className="lg-centered-title">
-        <small>The Wedding Of</small>
+        <small>{model.occasionLabel}</small>
         <h2>{model.couple}</h2>
         <p>{model.dateLabel}</p>
-        <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle light /> Play All Films</button>
+        <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle light /> {model.playAllLabel}</button>
       </section>
       <section className="lg-card-row">{model.films.slice(0, 3).map((film) => <FilmCard film={film} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
@@ -1212,7 +1357,7 @@ function GroveTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSel
       <header><BrandMark studioName={model.studioName} /><ActionDots actions={model.actions} light /></header>
       <section className="lg-grove-player still" style={filmStyle(model.films[0])}>
         <div>
-          <small>Now Playing · Wedding Film</small>
+          <small>Now Playing · {model.sampleMode ? 'Wedding Film' : model.films[0].title}</small>
           <h2>{model.couple}</h2>
           <p><button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle /> Play Film</button><span>{model.dateLabel} · {model.films[0].duration}</span></p>
         </div>
@@ -1223,17 +1368,22 @@ function GroveTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSel
 }
 
 function AtelierTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
-  const parts = model.couple.split('&').map((part) => part.trim());
+  const names = splitCoupleNames(model.couple);
   return (
     <main className="lg-template lg-atelier">
-      <header><BrandMark studioName={model.studioName} /><span>Ravello · MMXXV · Vol.14</span></header>
+      <header><BrandMark studioName={model.studioName} />{model.editionLabel && <span>{model.editionLabel}</span>}</header>
       <section className="lg-atelier-title">
-        <div><small>Ravello · MMXXV · Vol.14</small><h2>{parts[0] || model.couple} <em>&</em> {parts[1] || ''}</h2></div>
-        <p>{model.pullQuote}</p>
+        <div>{model.editionLabel && <small>{model.editionLabel}</small>}<h2>{names ? <>{names[0]} <em>&</em> {names[1]}</> : model.couple}</h2></div>
+        {model.pullQuote && <p>{model.pullQuote}</p>}
       </section>
       <section className="lg-bento">{model.films.slice(0, 5).map((film, index) => <FilmBento film={film} index={index} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
   );
+}
+
+function splitCoupleNames(couple: string): [string, string] | null {
+  const match = couple.match(/^\s*(.+?)\s+(?:&|and)\s+(.+?)\s*$/i);
+  return match ? [match[1], match[2]] : null;
 }
 
 function ReelTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
@@ -1244,10 +1394,10 @@ function ReelTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSele
         <div className="lg-reel-feature still" style={filmStyle(model.films[0])}>
           <div><small>Feature Film · 16:9</small><h2>{model.couple}</h2><button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle /> Play Film · {model.films[0].duration}</button></div>
         </div>
-        <aside>
-          <strong>Social Reels <b>1 / 5</b></strong>
+        {model.reels.length > 0 && <aside>
+          <strong>{model.reelHeading} <b>{model.reelCountLabel}</b></strong>
           {model.reels.map((film, index) => <ReelCard film={film} index={index} key={film.id} onFilmSelect={onFilmSelect} />)}
-        </aside>
+        </aside>}
       </section>
     </main>
   );
@@ -1257,7 +1407,7 @@ function OvertureTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilm
   const parts = model.couple.replace('&', 'and').split(' ');
   return (
     <main className="lg-template lg-overture">
-      <small>Nightingale Films Presents</small>
+      <small>{model.studioName} Presents</small>
       <section className="lg-poster">
         <div className="still" style={filmStyle(model.films[0])}>
           <span className="lg-play-circle"><PlayTriangle /></span>
@@ -1274,10 +1424,10 @@ function PassageTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmS
   return (
     <main className="lg-template lg-passage">
       <header>
-        <div><BrandMark studioName={model.studioName} /><h2>{model.couple}</h2><p>A film in four movements · {model.dateLabel} · Ravello</p></div>
-        <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle light /> Play the Full Film</button>
+        <div><BrandMark studioName={model.studioName} /><h2>{model.couple}</h2>{model.passageLabel && <p>{model.passageLabel}</p>}</div>
+        <button onClick={() => onFilmSelect?.(model.films[0])}><PlayTriangle light /> {model.playAllLabel}</button>
       </header>
-      <section className="lg-timeline">{model.chapters.map((chapter) => <TimelineStation chapter={chapter} key={chapter.title} onFilmSelect={onFilmSelect} />)}</section>
+      <section className="lg-timeline">{model.chapters.map((chapter) => <TimelineStation chapter={chapter} key={chapter.film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
   );
 }
@@ -1285,7 +1435,7 @@ function PassageTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmS
 function SalonTemplate({ model, onFilmSelect }: { model: PreviewModel; onFilmSelect?: FilmSelectHandler }) {
   return (
     <main className="lg-template lg-salon">
-      <header><div><BrandMark studioName={model.studioName} /><h2>{model.couple}</h2></div><div><SegmentedTabs /><ActionDots actions={model.actions} light single /></div></header>
+      <header><div><BrandMark studioName={model.studioName} /><h2>{model.couple}</h2></div><div><SegmentedTabs showPhotos={model.hasPhotoTab} /><ActionDots actions={model.actions} light single /></div></header>
       <section className="lg-salon-wall">{model.films.map((film, index) => <SalonPrint feature={index === 0} film={film} key={film.id} onFilmSelect={onFilmSelect} />)}</section>
     </main>
   );
@@ -1296,12 +1446,19 @@ function BrandMark({ dark = false, studioName }: { dark?: boolean; studioName: s
 }
 
 function ActionDots({ actions = ['Share', 'Download'], light = false, single = false }: { actions?: string[]; light?: boolean; single?: boolean }) {
+  const actionContext = useContext(GalleryActionContext);
   const visibleActions = single ? actions.slice(-1) : actions;
-  return <nav className={`lg-actions ${light ? 'is-light' : ''}`}>{visibleActions.map((action) => <span key={action}>{action}</span>)}</nav>;
+  return (
+    <nav aria-label="Gallery actions" className={`lg-actions ${light ? 'is-light' : ''}`}>
+      {visibleActions.map((action) => actionContext
+        ? <button key={action} onClick={() => actionContext.onAction(action)} type="button">{actionContext.labels?.[action] ?? action}</button>
+        : <span key={action}>{action}</span>)}
+    </nav>
+  );
 }
 
-function SegmentedTabs() {
-  return <nav className="lg-tabs"><span>Films</span><span>Photos</span></nav>;
+function SegmentedTabs({ showPhotos = false }: { showPhotos?: boolean }) {
+  return <nav className="lg-tabs"><span>Films</span>{showPhotos && <span>Photos</span>}</nav>;
 }
 
 function PlayTriangle({ light = false }: { light?: boolean }) {
@@ -1350,7 +1507,7 @@ function FilmThumb({ active = false, film, onFilmSelect }: { active?: boolean; f
 }
 
 function FilmRow({ active = false, film, onFilmSelect }: { active?: boolean; film: PreviewFilm; onFilmSelect?: FilmSelectHandler }) {
-  return <article className={`lg-film-row ${active ? 'active' : ''} ${film.paidUnlockEnabled ? 'is-paid' : ''}`} {...filmInteractionProps(film, onFilmSelect)}><i className="still" style={filmStyle(film)}><PlayTriangle light /><PaidFilmBadge compact film={film} /></i><span>{film.title}<b>{film.category} · {film.duration}</b></span></article>;
+  return <article className={`lg-film-row ${active ? 'active' : ''} ${film.paidUnlockEnabled ? 'is-paid' : ''}`} {...filmInteractionProps(film, onFilmSelect)}><i className="still" style={filmStyle(film)}><PaidFilmBadge compact film={film} /></i><span>{film.title}<b>{film.category} · {film.duration}</b></span></article>;
 }
 
 function FilmBento({ film, index, onFilmSelect }: { film: PreviewFilm; index: number; onFilmSelect?: FilmSelectHandler }) {
@@ -1362,7 +1519,7 @@ function ReelCard({ film, index, onFilmSelect }: { film: PreviewFilm; index: num
 }
 
 function TimelineStation({ chapter, onFilmSelect }: { chapter: PreviewModel['chapters'][number]; onFilmSelect?: FilmSelectHandler }) {
-  return <article className={chapter.film.paidUnlockEnabled ? 'is-paid' : ''} {...filmInteractionProps(chapter.film, onFilmSelect)}><time>{chapter.time}</time><i className="still" style={filmStyle(chapter.film)}><PlayTriangle light /><PaidFilmBadge compact film={chapter.film} /></i><span>{chapter.title}<b>{chapter.blurb}</b></span><em>{chapter.duration}</em></article>;
+  return <article className={chapter.film.paidUnlockEnabled ? 'is-paid' : ''} {...filmInteractionProps(chapter.film, onFilmSelect)}><time>{chapter.time}</time><i className="still" style={filmStyle(chapter.film)}><PlayTriangle light /><PaidFilmBadge compact film={chapter.film} /></i><span>{chapter.title}{chapter.blurb && <b>{chapter.blurb}</b>}</span><em>{chapter.duration}</em></article>;
 }
 
 function SalonPrint({ feature = false, film, onFilmSelect }: { feature?: boolean; film: PreviewFilm; onFilmSelect?: FilmSelectHandler }) {
@@ -1408,7 +1565,7 @@ function SettingsTab({
       setPendingAccess(null);
       setPassword('');
     } catch (error) {
-      setAccessError(error instanceof Error ? error.message : 'Gallery access update failed.');
+      setAccessError(userMessage(error, 'Gallery access could not be updated. Try again.'));
     } finally {
       setSavingAccess(false);
     }
@@ -1426,7 +1583,7 @@ function SettingsTab({
       setPendingAccess(null);
       setPassword('');
     } catch (error) {
-      setAccessError(error instanceof Error ? error.message : 'Gallery password update failed.');
+      setAccessError(userMessage(error, 'Gallery password could not be updated. Try again.'));
     } finally {
       setSavingAccess(false);
     }

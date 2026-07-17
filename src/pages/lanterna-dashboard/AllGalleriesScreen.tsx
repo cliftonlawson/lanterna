@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Search,
   Sun,
+  Trash2,
   User,
   X,
 } from 'lucide-react';
@@ -33,6 +34,7 @@ type Props = {
   onArchiveGallery: (id: string) => void;
   onArchiveTabChange: (tab: 'active' | 'archived') => void;
   onBack?: () => void;
+  onDeleteGallery: (id: string) => Promise<void>;
   onNewGallery: () => void;
   onOpenGallery: (id: string) => void;
   onQueryChange: (query: string) => void;
@@ -59,6 +61,7 @@ export function AllGalleriesScreen({
   onArchiveGallery,
   onArchiveTabChange,
   onBack,
+  onDeleteGallery,
   onNewGallery,
   onOpenGallery,
   onQueryChange,
@@ -67,6 +70,7 @@ export function AllGalleriesScreen({
 }: Props) {
   const [sort, setSort] = useState<GallerySort>('current');
   const [sortOpen, setSortOpen] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState<DashboardGallery | null>(null);
   const sortRef = useRef<HTMLDivElement>(null);
   const sortTriggerRef = useRef<HTMLButtonElement>(null);
   const sortOptionRefs = useRef(new Map<GallerySort, HTMLButtonElement>());
@@ -235,10 +239,18 @@ export function AllGalleriesScreen({
               gallery={gallery}
               key={gallery.id}
               onArchiveGallery={onArchiveGallery}
+              onDeleteGallery={setDeleteCandidate}
               onOpenGallery={onOpenGallery}
             />
           ))}
         </div>
+      )}
+      {deleteCandidate && (
+        <PermanentDeleteDialog
+          gallery={deleteCandidate}
+          onClose={() => setDeleteCandidate(null)}
+          onDelete={onDeleteGallery}
+        />
       )}
     </section>
   );
@@ -266,11 +278,13 @@ function GalleryCard({
   coverUrls = [],
   gallery,
   onArchiveGallery,
+  onDeleteGallery,
   onOpenGallery,
 }: {
   coverUrls?: string[];
   gallery: DashboardGallery;
   onArchiveGallery: (id: string) => void;
+  onDeleteGallery: (gallery: DashboardGallery) => void;
   onOpenGallery: (id: string) => void;
 }) {
   const meta = statusMeta(gallery.status);
@@ -360,10 +374,94 @@ function GalleryCard({
               <ArchiveIcon size={15} />
               {archiveLabel}
             </button>
+            {gallery.archived && (
+              <button
+                className="gallery-action-delete"
+                onClick={() => {
+                  onDeleteGallery(gallery);
+                  setMenuOpen(false);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <Trash2 aria-hidden="true" size={15} />
+                Delete permanently
+              </button>
+            )}
           </div>
         )}
       </div>
     </article>
+  );
+}
+
+function PermanentDeleteDialog({
+  gallery,
+  onClose,
+  onDelete,
+}: {
+  gallery: DashboardGallery;
+  onClose: () => void;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [confirmation, setConfirmation] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const confirmed = confirmation.trim() === gallery.name;
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    const closeWithKeyboard = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || deleting) return;
+      event.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', closeWithKeyboard);
+    return () => document.removeEventListener('keydown', closeWithKeyboard);
+  }, [deleting, onClose]);
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section aria-describedby="permanent-delete-description" aria-labelledby="permanent-delete-title" aria-modal="true" className="modal-card permanent-delete-modal" role="dialog">
+        <button aria-label="Cancel permanent deletion" className="modal-close" disabled={deleting} onClick={onClose} type="button"><X aria-hidden="true" size={17} /></button>
+        <span className="permanent-delete-icon"><Trash2 aria-hidden="true" size={22} /></span>
+        <h2 id="permanent-delete-title">Delete gallery permanently?</h2>
+        <p id="permanent-delete-description">“{gallery.name}” will disappear immediately. LANTERNA will permanently delete its uploaded films and photos. This cannot be undone.</p>
+        <label htmlFor="permanent-delete-confirmation">Type <strong>{gallery.name}</strong> to confirm</label>
+        <input
+          autoComplete="off"
+          disabled={deleting}
+          id="permanent-delete-confirmation"
+          onChange={(event) => {
+            setConfirmation(event.target.value);
+            setError('');
+          }}
+          ref={inputRef}
+          value={confirmation}
+        />
+        {error && <div aria-live="polite" className="modal-form-error" role="alert">{error}</div>}
+        <div className="permanent-delete-actions">
+          <button className="secondary" disabled={deleting} onClick={onClose} type="button">Cancel</button>
+          <button
+            className="danger-primary"
+            disabled={!confirmed || deleting}
+            onClick={() => {
+              setDeleting(true);
+              setError('');
+              void onDelete(gallery.id).then(onClose).catch(() => {
+                setError('The gallery could not be deleted. Try again.');
+                setDeleting(false);
+              });
+            }}
+            type="button"
+          >
+            <Trash2 aria-hidden="true" size={16} />
+            {deleting ? 'Deleting…' : 'Delete permanently'}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 

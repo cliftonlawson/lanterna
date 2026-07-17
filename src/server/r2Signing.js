@@ -16,6 +16,12 @@ function encodeKeyPath(key) {
   return String(key || '').split('/').map(rfc3986).join('/');
 }
 
+function byteOrder([left], [right]) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 async function hmac(key, value, output = 'bytes') {
   const cryptoKey = await crypto.subtle.importKey(
     'raw',
@@ -46,7 +52,11 @@ async function signingKey(secretAccessKey, dateStamp) {
 export function mediaObjectKey({ accountId, galleryId, objectName = 'original', targetType, targetId, fileName }) {
   const extension = String(fileName || '').split('.').pop()?.toLowerCase();
   const suffix = extension && extension !== fileName.toLowerCase() ? `.${safeSlug(extension)}` : '';
-  const folder = targetType === 'photo' ? 'photos' : targetType === 'background' ? 'backgrounds' : 'films';
+  const folder = targetType === 'photo'
+    ? 'photos'
+    : targetType === 'background'
+      ? 'backgrounds'
+      : targetType === 'music' ? 'music' : 'films';
 
   return [
     safeSlug(accountId),
@@ -64,12 +74,15 @@ async function createR2PresignedUrl(env, {
   key,
   method,
   now,
+  responseContentDisposition,
 }) {
   requireEnv(env, ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME']);
   if (!key) throw new Error('R2 object key is required.');
 
-  const host = `${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
   const bucket = env.R2_BUCKET_NAME;
+  const host = method === 'GET'
+    ? `${bucket}.${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`
+    : `${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
   const amzDate = amzTimestamp(now);
   const dateStamp = amzDate.slice(0, 8);
   const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
@@ -83,19 +96,24 @@ async function createR2PresignedUrl(env, {
   };
   const signedHeaders = Object.keys(headerValues).sort().join(';');
   const canonicalHeaders = Object.entries(headerValues)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(byteOrder)
     .map(([name, value]) => `${name}:${value}\n`)
     .join('');
-  const canonicalUri = `/${encodeKeyPath(bucket)}/${encodeKeyPath(key)}`;
+  const canonicalUri = method === 'GET'
+    ? `/${encodeKeyPath(key)}`
+    : `/${encodeKeyPath(bucket)}/${encodeKeyPath(key)}`;
   const query = {
     'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+    ...(method === 'GET' ? { 'X-Amz-Content-Sha256': 'UNSIGNED-PAYLOAD' } : {}),
     'X-Amz-Credential': credential,
     'X-Amz-Date': amzDate,
     'X-Amz-Expires': String(expiresInSeconds),
     'X-Amz-SignedHeaders': signedHeaders,
+    ...(method === 'GET' && responseContentDisposition ? { 'response-content-disposition': responseContentDisposition } : {}),
+    ...(method === 'GET' ? { 'x-amz-checksum-mode': 'ENABLED', 'x-id': 'GetObject' } : {}),
   };
   const canonicalQuery = Object.entries(query)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(byteOrder)
     .map(([name, value]) => `${rfc3986(name)}=${rfc3986(value)}`)
     .join('&');
   const canonicalRequest = [method, canonicalUri, canonicalQuery, canonicalHeaders, signedHeaders, 'UNSIGNED-PAYLOAD'].join('\n');
@@ -117,6 +135,6 @@ export async function createR2PresignedPutUrl(env, { key, contentLength, content
   return createR2PresignedUrl(env, { contentLength, contentType, expiresInSeconds, key, method: 'PUT', now });
 }
 
-export async function createR2PresignedGetUrl(env, { key, expiresInSeconds = 600, now = new Date() }) {
-  return createR2PresignedUrl(env, { expiresInSeconds, key, method: 'GET', now });
+export async function createR2PresignedGetUrl(env, { key, expiresInSeconds = 600, now = new Date(), responseContentDisposition }) {
+  return createR2PresignedUrl(env, { expiresInSeconds, key, method: 'GET', now, responseContentDisposition });
 }

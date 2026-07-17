@@ -3,9 +3,11 @@ import { AccountScreen } from './lanterna-dashboard/AccountScreen';
 import { AllGalleriesScreen } from './lanterna-dashboard/AllGalleriesScreen';
 import {
   completeBackgroundUpload,
+  completeMusicUpload,
   completeUpload,
   completeVideoMasterUpload,
   createBackgroundUploadSlot,
+  createMusicUploadSlot,
   createGalleryRemote,
   createUploadSlot,
   pauseVideoMasterUpload,
@@ -22,6 +24,7 @@ import {
   loadDashboardGalleries,
   loadUploadJobs,
   loadWorkspaceAccount,
+  permanentlyDeleteGallery,
   saveDashboardGalleryDesign,
   saveDashboardGalleries,
   saveUploadJobs,
@@ -35,6 +38,7 @@ import { NewGalleryModal } from './lanterna-dashboard/NewGalleryModal';
 import { UploadScreen } from './lanterna-dashboard/UploadScreen';
 import { VendorDashboardScreen } from './lanterna-dashboard/VendorDashboardScreen';
 import { VideoDrawer } from './lanterna-dashboard/VideoDrawer';
+import { userMessage } from '../lib/userMessages';
 import {
   defaultDeliveryDraft,
   defaultGalleryDesign,
@@ -258,8 +262,20 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       commitGalleries((prev) => prev.map((item) => item.id === id ? { ...item, archived } : item), 'archive');
       showToast(archived ? 'Gallery archived' : 'Gallery restored');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Gallery update failed');
+      showToast(userMessage(error, 'Gallery could not be updated. Try again.'));
     }
+  };
+
+  const deleteArchivedGallery = async (id: string) => {
+    const gallery = galleriesRef.current.find((item) => item.id === id);
+    if (!gallery?.archived) throw new Error('Archive the gallery before deleting it permanently.');
+
+    await permanentlyDeleteGallery(id);
+    const next = galleriesRef.current.filter((item) => item.id !== id);
+    galleriesRef.current = next;
+    setGalleries(next);
+    setActiveId((current) => current === id ? next[0]?.id ?? '' : current);
+    showToast('Gallery permanently deleted');
   };
 
   const updateActiveDesign = (patch: Partial<GalleryDesign>) => {
@@ -271,7 +287,17 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   };
 
   const updateActiveGallery = (patch: Partial<DashboardGallery>) => {
-    commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? { ...gallery, ...patch } : gallery), 'autosave');
+    commitGalleries((prev) => prev.map((gallery) => {
+      if (gallery.id !== activeGallery.id) return gallery;
+      const nextGallery = { ...gallery, ...patch };
+      if (typeof patch.allowDownloads === 'boolean') {
+        nextGallery.videoItems = gallery.videoItems.map((video) => ({
+          ...video,
+          downloadEnabled: patch.allowDownloads as boolean,
+        }));
+      }
+      return nextGallery;
+    }), 'autosave');
   };
 
   const deleteActiveVideo = async (videoId: string) => {
@@ -292,7 +318,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       videos: nextVideos.length,
     } : gallery), 'video');
 
-    if (result.mode === 'local') showToast(result.reason ?? 'Film removed locally; database delete did not complete');
+    if (result.mode === 'local') showToast('Film was removed from this view, but the change could not be fully saved. Try again.');
   };
 
   const createGallery = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -335,7 +361,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         views: '0',
         status: persisted.status,
         access,
-        allowDownloads: false,
+        allowDownloads: workspace.defaultDownloads,
         autoExpire: false,
         passwordSet: persisted.passwordSet,
         coverChosen: false,
@@ -354,10 +380,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       setView('upload');
       showToast(`Gallery "${name}" created`);
     } catch (error) {
-      const message = error instanceof Error && error.message !== 'Failed to fetch'
-        ? error.message
-        : 'Gallery could not be saved. Check your connection and try again.';
-      setCreateGalleryError(message);
+      setCreateGalleryError(userMessage(error, 'Gallery could not be saved. Check your connection and try again.'));
     } finally {
       createGalleryRequestRef.current = false;
       setCreatingGallery(false);
@@ -379,7 +402,6 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
     const preflight = [
       { ok: activeGallery.access !== 'Password' || activeGallery.passwordSet, message: 'Set gallery password' },
       { ok: activeGallery.videos > 0, message: 'Add at least one film to deliver' },
-      { ok: activeGallery.coverChosen, message: 'Choose a cover before delivery' },
       { ok: activeGallery.deliveryDraft.recipients.trim().length > 0, message: 'Add at least one recipient' },
     ];
     const failed = preflight.find((item) => !item.ok);
@@ -400,9 +422,9 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
 
       commitGalleries((prev) => prev.map((gallery) => gallery.id === activeGallery.id ? deliveryResult.gallery : gallery), 'delivery');
       const recipients = parseRecipientEmails(activeGallery.deliveryDraft.recipients);
-      showToast(deliveryResult.mode === 'supabase' ? 'Delivery sent' : `Delivery saved locally (${recipients.length})`);
+      showToast(deliveryResult.mode !== 'local' ? 'Delivery sent' : `Delivery prepared for ${recipients.length} ${recipients.length === 1 ? 'recipient' : 'recipients'}`);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Delivery blocked');
+      showToast(userMessage(error, 'Delivery could not be sent. Your draft is still available.'));
     }
   };
 
@@ -531,7 +553,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         });
 
         if (targetType === 'video') {
-          if (slot.r2.method !== 'MULTIPART') throw new Error('Video upload did not return an R2 multipart session.');
+          if (slot.r2.method !== 'MULTIPART') throw new Error('Video upload could not start. Try again.');
           const controller = new AbortController();
           uploadAbortControllersRef.current.set(jobId, controller);
 
@@ -557,7 +579,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           setGalleries((current) => current.map((gallery) => gallery.id === activeGallery.id
             ? updateUploadedMedia(gallery, target.id, 'video', master.r2Key, master.verifiedBytes, null, false)
             : gallery));
-          showToast('Master secured; preparing playback');
+          showToast('Upload complete; preparing your film');
 
           try {
             const playback = await startVideoPlaybackPreparation(activeGallery.id, slot.uploadJobId);
@@ -574,12 +596,12 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
             nextJobs = nextJobs.map((job) => refreshedById.get(job.id) ?? job);
             setGalleries(refreshedGalleries);
             setUploadJobs(nextJobs);
-            showToast(error instanceof Error ? error.message : 'Master secured; playback preparation needs a retry');
+            showToast(userMessage(error, 'Upload complete, but the film still needs preparation. Try again.'));
           }
           continue;
         }
 
-        if (slot.r2.method !== 'PUT') throw new Error('Photo upload did not return an R2 upload URL.');
+        if (slot.r2.method !== 'PUT') throw new Error('Photo upload could not start. Try again.');
         await putFileToR2(file, slot.r2, (bytesUploaded) => setJob(jobId, { bytesUploaded, status: 'uploading' }));
         const completed = await completeUpload({
           galleryId: activeGallery.id,
@@ -596,7 +618,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           return updated;
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Upload failed';
+        const message = userMessage(error, 'Upload could not be completed. Try again.');
         const paused = error instanceof DOMException && error.name === 'AbortError';
         uploadAbortControllersRef.current.delete(jobId);
         setJob(jobId, {
@@ -644,7 +666,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         targetId: job.targetId,
         targetType: 'video',
       });
-      if (slot.r2.method !== 'MULTIPART') throw new Error('Video resume did not return an R2 multipart session.');
+      if (slot.r2.method !== 'MULTIPART') throw new Error('Video upload could not resume. Start it again.');
 
       const controller = new AbortController();
       uploadAbortControllersRef.current.set(job.id, controller);
@@ -672,7 +694,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         ? updateUploadedMedia(item, job.targetId!, 'video', master.r2Key, master.verifiedBytes, playback.streamUid, false)
         : item));
       setWorkspace(await loadWorkspaceAccount());
-      showToast('Master secured; preparing playback');
+      showToast('Upload complete; preparing your film');
     } catch (error) {
       const paused = error instanceof DOMException && error.name === 'AbortError';
       uploadAbortControllersRef.current.delete(job.id);
@@ -686,7 +708,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       ]);
       setGalleries(refreshedGalleries);
       setUploadJobs(refreshedJobs);
-      showToast(error instanceof Error ? error.message : 'Upload resume failed');
+      showToast(userMessage(error, 'Upload could not resume. Try again.'));
     }
   };
 
@@ -703,7 +725,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       });
       const playback = await startVideoPlaybackPreparation(job.galleryId, job.id);
       patchUploadJob(job.id, { status: 'processing', uploadPhase: playback.uploadPhase });
-      showToast('Preparing playback from the secured master');
+      showToast('Preparing your film');
     } catch (error) {
       const [refreshedGalleries, refreshedJobs] = await Promise.all([
         loadDashboardGalleries(),
@@ -711,7 +733,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       ]);
       setGalleries(refreshedGalleries);
       setUploadJobs(refreshedJobs);
-      showToast(error instanceof Error ? error.message : 'Playback retry failed');
+      showToast(userMessage(error, 'Film preparation could not restart. Try again.'));
     }
   };
 
@@ -743,7 +765,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
         uploadJobId: slot.uploadJobId,
       });
 
-      const updatedGalleries = galleries.map((gallery) => gallery.id === activeGallery.id ? {
+      const updatedGalleries = galleriesRef.current.map((gallery) => gallery.id === activeGallery.id ? {
         ...gallery,
         design: {
           ...gallery.design,
@@ -751,12 +773,61 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           backgroundType: 'image' as const,
         },
       } : gallery);
+      galleriesRef.current = updatedGalleries;
       setGalleries(updatedGalleries);
       await saveDashboardGalleries(updatedGalleries, 'upload');
       updateWorkspace({ allowanceUsedGb: workspace.allowanceUsedGb + completed.verifiedBytes / 1_000_000_000 });
       showToast('Background uploaded');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Background upload failed');
+      showToast(userMessage(error, 'Background image could not be uploaded. Try again.'));
+    }
+  };
+
+  const uploadBackgroundMusic = async (file: File) => {
+    if (!activeGallery) return;
+    const contentType = musicFileContentType(file);
+    if (!contentType) {
+      showToast('Choose an MP3, WAV, M4A, AAC, or OGG file');
+      return;
+    }
+
+    const availableBytes = gbToBytes(workspace.allowanceTotalGb - workspace.allowanceUsedGb);
+    if (availableBytes < file.size) {
+      showToast('Not enough upload allowance');
+      return;
+    }
+
+    try {
+      showToast('Uploading music');
+      const slot = await createMusicUploadSlot({
+        bytesTotal: file.size,
+        contentType,
+        fileName: file.name,
+        galleryId: activeGallery.id,
+      });
+
+      await putFileToR2(file, slot.r2, () => undefined);
+      const completed = await completeMusicUpload({
+        galleryId: activeGallery.id,
+        uploadJobId: slot.uploadJobId,
+      });
+
+      const updatedGalleries = galleriesRef.current.map((gallery) => gallery.id === activeGallery.id ? {
+        ...gallery,
+        design: {
+          ...gallery.design,
+          musicTrackName: file.name,
+          musicTrackR2Key: completed.r2Key,
+        },
+      } : gallery);
+      galleriesRef.current = updatedGalleries;
+      setGalleries(updatedGalleries);
+      await saveDashboardGalleries(updatedGalleries, 'upload');
+      updateWorkspace({ allowanceUsedGb: workspace.allowanceUsedGb + completed.verifiedBytes / 1_000_000_000 });
+      showToast('Music uploaded');
+    } catch (error) {
+      showToast(userMessage(error, 'Music could not be uploaded. Try again.'));
+      throw error;
     }
   };
 
@@ -768,7 +839,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       uploadAbortControllersRef.current.get(jobId)?.abort();
       patchUploadJob(jobId, { status: 'paused' });
       void pauseVideoMasterUpload(job.galleryId, job.id).catch((error) => {
-        showToast(error instanceof Error ? error.message : 'Could not pause upload');
+        showToast(userMessage(error, 'Upload could not be paused. Try again.'));
       });
       return;
     }
@@ -815,6 +886,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
             setCreateGalleryError('');
             setNewOpen(true);
           }}
+          onDeleteGallery={deleteArchivedGallery}
           onOpenGallery={openGallery}
           onQueryChange={setQuery}
           onSignUp={onSignUp}
@@ -833,6 +905,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
           onGalleryChange={updateActiveGallery}
           onGalleryAccessChange={updateGalleryAccess}
           onBackgroundUpload={uploadBackgroundImage}
+          onMusicUpload={uploadBackgroundMusic}
           onOpenUpload={() => setView('upload')}
           onSelectedPhotosChange={setSelectedPhotos}
           onSendDelivery={sendDelivery}
@@ -893,6 +966,18 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       {toast && <div className="toast">{toast}</div>}
     </AppShell>
   );
+}
+
+function musicFileContentType(file: File) {
+  if (file.type.startsWith('audio/')) return file.type.toLowerCase();
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  return {
+    aac: 'audio/aac',
+    m4a: 'audio/mp4',
+    mp3: 'audio/mpeg',
+    ogg: 'audio/ogg',
+    wav: 'audio/wav',
+  }[extension ?? ''] ?? '';
 }
 
 function cleanFileTitle(fileName: string) {

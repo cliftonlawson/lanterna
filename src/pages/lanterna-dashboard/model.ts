@@ -99,7 +99,8 @@ export type GalleryDesign = {
   headlineFont: string;
   headlineFontWeight: number;
   layout: 'lumen' | 'diptych' | 'meridian' | 'grove' | 'atelier' | 'reel' | 'overture' | 'passage' | 'salon';
-  musicTrack: string;
+  musicTrackName: string;
+  musicTrackR2Key: string | null;
   subtitle: string;
   theme: Theme;
   title: string;
@@ -200,7 +201,8 @@ export function defaultGalleryDesign(title: string, gradient = mediaTileGradient
     headlineFont: 'Cormorant Garamond',
     headlineFontWeight: 500,
     layout: 'lumen',
-    musicTrack: 'First dance.wav',
+    musicTrackName: '',
+    musicTrackR2Key: null,
     subtitle: 'June 4, 2026 · Villa Toscana',
     theme: 'dark',
     title,

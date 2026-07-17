@@ -66,9 +66,9 @@ export function AccountScreen({ workspace, onBack }: Props) {
 
           <section className="account-card account-breakdown-card">
             <h2>Storage breakdown</h2>
-            <div><HardDrive size={16} /><span>Active masters</span><strong>{formatBytes(workspace.hotBytesStored)}</strong></div>
+            <div><HardDrive size={16} /><span>Active originals</span><strong>{formatBytes(workspace.hotBytesStored)}</strong></div>
             <div><Archive size={16} /><span>Archive</span><strong>{formatBytes(workspace.coldBytesStored)}</strong></div>
-            <div><Film size={16} /><span>Streaming</span><strong>{formatMinutes(workspace.streamMinutesStored)}</strong></div>
+            <div><Film size={16} /><span>Ready-to-play video</span><strong>{formatMinutes(workspace.streamMinutesStored)}</strong></div>
           </section>
         </aside>
       </div>

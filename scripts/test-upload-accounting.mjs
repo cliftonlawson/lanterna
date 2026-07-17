@@ -84,7 +84,7 @@ const functionSource = (name, nextName) => apiSource.slice(
   apiSource.indexOf(`async function ${nextName}`),
 );
 assert.doesNotMatch(functionSource('uploadComplete', 'clearUploadJob'), /body\.bytes|body\.r2Key/);
-assert.doesNotMatch(functionSource('backgroundComplete', 'posterSlot'), /body\.bytes|body\.r2Key/);
+assert.doesNotMatch(functionSource('backgroundComplete', 'musicSlot'), /body\.bytes|body\.r2Key/);
 assert.doesNotMatch(functionSource('posterComplete', 'posterCaptureFrame'), /body\.bytes|body\.r2Key/);
 
 console.log('truthful upload accounting checks passed');

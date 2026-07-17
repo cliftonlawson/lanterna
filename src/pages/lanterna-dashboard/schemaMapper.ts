@@ -43,6 +43,7 @@ export type GalleryDesignRecord = {
   body_font: string | null;
   body_font_weight: number | null;
   music_track_r2_key: string | null;
+  music_track_name?: string | null;
   featured_video_id: string | null;
   enabled_buttons: Partial<{
     backgroundGradient: string;
@@ -263,7 +264,8 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       headline_font_weight: gallery.design.headlineFontWeight,
       body_font: gallery.design.bodyFont,
       body_font_weight: gallery.design.bodyFontWeight,
-      music_track_r2_key: gallery.design.musicTrack || null,
+      music_track_name: gallery.design.musicTrackName || null,
+      music_track_r2_key: gallery.design.musicTrackR2Key,
       featured_video_id: featuredVideo ? videoDatabaseId(featuredVideo.id) : null,
       enabled_buttons: {
         ...gallery.design.topButtons,
@@ -304,7 +306,7 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       id: photoDatabaseId(photo.id),
       gallery_id: galleryId,
       album_id: photo.albumId ? albumDatabaseId(photo.albumId) : null,
-      r2_key: photo.r2Key ?? `media/photos/${gallery.id}/${photo.id}.jpg`,
+      r2_key: photo.r2Key ?? null,
       r2_bytes: photo.r2Bytes ?? 0,
       width: null,
       height: null,
@@ -352,7 +354,10 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
     layout: layoutSet.has(bundle.design.layout_template as GalleryDesign['layout'])
       ? bundle.design.layout_template as GalleryDesign['layout']
       : designDefaults.layout,
-    musicTrack: bundle.design.music_track_r2_key ?? designDefaults.musicTrack,
+    musicTrackName: bundle.design.music_track_name ?? '',
+    musicTrackR2Key: bundle.design.music_track_r2_key?.startsWith(`${bundle.gallery.account_id}/`)
+      ? bundle.design.music_track_r2_key
+      : null,
     subtitle: bundle.design.heading_subtitle ?? designDefaults.subtitle,
     theme: bundle.design.theme === 'light' ? 'light' : 'dark',
     title: bundle.design.heading_title ?? bundle.gallery.name,
@@ -383,7 +388,7 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
     autoExpire: Boolean(bundle.gallery.archived_at || bundle.gallery.storage_tier === 'archived'),
     passwordSet: Boolean(bundle.gallery.password_hash),
     passwordHash: null,
-    coverChosen: Boolean(bundle.gallery.cover_video_id || bundle.gallery.cover_photo_id),
+    coverChosen: Boolean(bundle.gallery.cover_video_id || bundle.gallery.cover_photo_id || videos.length),
     deliveryDraft: defaultDeliveryDraft(''),
     design,
     gradient: fallbackGradient,
@@ -406,7 +411,7 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
       paidUnlockLabel: video.paid_unlock_label ?? undefined,
       paidUnlockPriceCents: video.paid_unlock_price_cents ?? 30000,
       paidUnlockTagline: video.paid_unlock_tagline ?? undefined,
-      updatedAt: 'Updated from Supabase',
+      updatedAt: 'Recently updated',
     })),
     albums: albums.map((album) => ({
       id: album.id,

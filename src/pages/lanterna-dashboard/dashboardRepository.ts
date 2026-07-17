@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { clearUploadJobRemote, deleteGalleryMediaRemote, recordGalleryDelivery, setGalleryArchivedRemote } from './appApi';
+import { userMessage } from '../../lib/userMessages';
+import { clearUploadJobRemote, deleteGalleryMediaRemote, deleteGalleryPermanentlyRemote, recordGalleryDelivery, setGalleryArchivedRemote } from './appApi';
 import { parseRecipientEmails, upsertSentRecipients } from './delivery';
 import {
   loadStoredGalleries,
@@ -110,7 +111,6 @@ function hasUploadedVideoAsset(video: VideoRecord) {
 }
 
 function isVisibleDashboardVideo(video: VideoRecord) {
-  if (video.processing_status !== 'uploading' && video.processing_status !== 'processing') return true;
   return hasUploadedVideoAsset(video);
 }
 
@@ -231,10 +231,13 @@ async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: strin
   const galleryWrite = Object.fromEntries(
     Object.entries(galleryWithoutDeferredMediaRefs).filter(([key]) => !serverOwnedGalleryFields.has(key)),
   );
-  const designWithoutDeferredMediaRefs = {
-    ...bundle.design,
-    featured_video_id: null,
-  };
+  const designWithoutDeferredMediaRefs = Object.fromEntries(
+    Object.entries({ ...bundle.design, featured_video_id: null }).filter(([key]) => ![
+      'background_r2_key',
+      'music_track_name',
+      'music_track_r2_key',
+    ].includes(key)),
+  );
 
   const { error: galleryError } = await supabase.from('galleries').upsert(galleryWrite);
   if (galleryError) throw galleryError;
@@ -351,6 +354,7 @@ export async function loadDashboardGalleries() {
         body_font: 'DM Sans',
         body_font_weight: 400,
         music_track_r2_key: null,
+        music_track_name: null,
         featured_video_id: null,
         enabled_buttons: { share: true, embed: false, download: true },
         allow_downloads: null,
@@ -365,7 +369,7 @@ export async function loadDashboardGalleries() {
         (album) => `${album.sort_order}:${album.name}`,
       );
       const galleryPhotos = photos
-        .filter((photo) => photo.gallery_id === gallery.id)
+        .filter((photo) => photo.gallery_id === gallery.id && Boolean(photo.r2_key))
         .slice();
 
       return schemaBundleToGallery({
@@ -468,7 +472,10 @@ export async function saveWorkspaceAccount(workspace: WorkspaceAccount): Promise
 }
 
 export async function loadUploadJobs() {
-  const localJobs = loadStoredUploadJobs();
+  const localJobs = loadStoredUploadJobs().map((job) => ({
+    ...job,
+    errorMessage: job.errorMessage ? userMessage(job.errorMessage, 'Upload needs attention. Try again.') : undefined,
+  }));
 
   if (!isSupabaseConfigured) return localJobs;
 
@@ -514,7 +521,14 @@ export async function loadUploadJobs() {
       if (!targetExists || terminalTargets.has(targetKey)) return false;
       terminalTargets.add(targetKey);
       return true;
-    }).map((job) => ({
+    }).map((job) => {
+      const errorMessage = job.error_message || (activeStatuses.has(job.status) && !(
+        job.target_type === 'video'
+          ? validVideoIds.has(job.target_id)
+          : validPhotoIds.has(job.target_id)
+      ) ? 'Upload target is missing. Retry this upload.' : undefined);
+
+      return {
       id: job.id,
       galleryId: job.gallery_id,
       targetType: job.target_type,
@@ -531,14 +545,11 @@ export async function loadUploadJobs() {
       bytesUploaded: Number(job.bytes_uploaded),
       createdAt: job.created_at,
       errorCode: job.error_code ?? undefined,
-      errorMessage: job.error_message || (activeStatuses.has(job.status) && !(
-        job.target_type === 'video'
-          ? validVideoIds.has(job.target_id)
-          : validPhotoIds.has(job.target_id)
-      ) ? 'Upload target is missing. Retry this upload.' : undefined),
+      errorMessage: errorMessage ? userMessage(errorMessage, 'Upload needs attention. Try again.') : undefined,
       isReplacement: Boolean(job.is_replacement),
       uploadPhase: job.upload_phase ?? undefined,
-    }));
+      };
+    });
 
     saveStoredUploadJobs(jobs);
     return jobs;
@@ -591,6 +602,12 @@ export async function setGalleryArchived(galleryId: string, archived: boolean): 
   return { mode: 'supabase', ok: true };
 }
 
+export async function permanentlyDeleteGallery(galleryId: string): Promise<SaveResult> {
+  if (isSupabaseConfigured) await deleteGalleryPermanentlyRemote(galleryId);
+  saveStoredGalleries(loadStoredGalleries().filter((gallery) => gallery.id !== galleryId));
+  return { mode: isSupabaseConfigured ? 'supabase' : 'local', ok: true };
+}
+
 export async function saveDashboardGalleries(galleries: DashboardGallery[], reason: SaveReason = 'autosave'): Promise<SaveResult> {
   const localResult = persistLocal(galleries);
 
@@ -630,6 +647,7 @@ export async function saveDashboardGalleryDesign(
         'background_r2_key',
         'gallery_id',
         'music_track_r2_key',
+        'music_track_name',
       ].includes(key)),
     );
     let { error } = await supabase
@@ -665,10 +683,6 @@ export async function deliverGallery(gallery: DashboardGallery): Promise<Deliver
   }
 
   try {
-    const accountId = await currentAccountId();
-    if (!accountId) throw new Error('Supabase account membership is missing.');
-
-    await saveGalleryToSupabase(gallery, accountId);
     await recordGalleryDelivery({
       galleryId: gallery.id,
       message: gallery.deliveryDraft.message,

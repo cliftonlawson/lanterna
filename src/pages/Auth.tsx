@@ -2,6 +2,7 @@ import { useEffect, useState, FormEvent } from 'react';
 import { Eye, EyeOff, ArrowLeft } from 'lucide-react';
 import { LanternLogo } from '../components/LanternLogo';
 import { useAuth } from '../contexts/useAuth';
+import { userMessage } from '../lib/userMessages';
 
 type Props = {
   onBack: () => void;
@@ -65,7 +66,7 @@ export function Auth({ onBack }: Props) {
     if (error) {
       setError(authMessage(error.message));
     } else {
-      setNotice('Confirmation email sent. Open the newest Supabase email, then come back here to sign in.');
+      setNotice('Confirmation email sent. Open the newest message, then come back here to sign in.');
     }
     setLoading(false);
   };
@@ -200,10 +201,10 @@ export function Auth({ onBack }: Props) {
 function authMessage(message: string) {
   const lower = message.toLowerCase();
   if (lower.includes('rate') || lower.includes('wait')) {
-    return 'Supabase is rate-limiting confirmation emails. Give it about a minute, then try once. If the first attempt worked, check your inbox before retrying.';
+    return 'Too many confirmation emails were requested. Wait about a minute, then try again. Check your inbox before requesting another.';
   }
   if (lower.includes('email not confirmed')) {
-    return 'Supabase still has this user marked as not confirmed. Use the newest confirmation email, or manually confirm the user in Supabase Authentication.';
+    return 'Your email is not confirmed yet. Use the newest confirmation email, or resend it below.';
   }
-  return message;
+  return userMessage(message, 'Sign-in could not be completed. Check your details and try again.');
 }

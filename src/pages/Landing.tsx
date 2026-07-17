@@ -32,7 +32,7 @@ type Plan = {
 
 const features = [
   {
-    desc: 'Drag and drop your videos. We handle encoding, compression, and delivery automatically.',
+    desc: 'Drag and drop your videos. We prepare every file and deliver it automatically.',
     icon: Upload,
     title: 'Upload in seconds',
   },
@@ -47,7 +47,7 @@ const features = [
     title: 'Know when they watch',
   },
   {
-    desc: 'Global CDN delivers your work at full quality, no matter where your client is.',
+    desc: 'Your galleries load quickly and preserve full quality wherever clients watch.',
     icon: Zap,
     title: 'Lightning fast delivery',
   },
@@ -57,9 +57,9 @@ const features = [
     title: 'Secure by default',
   },
   {
-    desc: 'Adaptive streaming ensures smooth, buffer-free playback on every device.',
+    desc: 'Films start quickly and play smoothly on every device.',
     icon: Play,
-    title: 'Cinema-quality playback',
+    title: 'Cinema-quality viewing',
   },
 ];
 
@@ -165,7 +165,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
           <a href="#footer">Blog</a>
         </div>
         <div className="landing-nav-actions">
-          <button className="landing-ghost" onClick={onTryDemo}>Try demo</button>
+          <button className="landing-ghost" onClick={onTryDemo}>Explore LANTERNA</button>
           <button className="landing-ghost" onClick={onGetStarted}>Sign in</button>
           <button className="landing-primary small" onClick={onGetStarted}>Get started</button>
         </div>
@@ -187,7 +187,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
             </button>
             <button className="landing-demo" onClick={onTryDemo}>
               <span><Play size={12} fill="currentColor" /></span>
-              Try the demo
+              Explore the workspace
             </button>
           </div>
           <HeroGalleryMockup />
