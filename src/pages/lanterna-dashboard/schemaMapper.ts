@@ -33,6 +33,7 @@ export type GalleryDesignRecord = {
   heading_subtitle: string | null;
   layout_template: string;
   background_type: 'image' | 'video';
+  background_gradient?: string | null;
   background_r2_key: string | null;
   theme: string;
   accent_color: string | null;
@@ -42,8 +43,10 @@ export type GalleryDesignRecord = {
   body_font: string | null;
   body_font_weight: number | null;
   music_track_r2_key: string | null;
+  music_track_name?: string | null;
   featured_video_id: string | null;
   enabled_buttons: Partial<{
+    backgroundGradient: string;
     download: boolean;
     embed: boolean;
     share: boolean;
@@ -149,6 +152,7 @@ const layoutSet = new Set<GalleryDesign['layout']>([
   'passage',
   'salon',
 ]);
+
 const typographySet = new Set<GalleryDesign['typography']>(['editorial', 'modern']);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -251,6 +255,7 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       heading_subtitle: gallery.design.subtitle || null,
       layout_template: gallery.design.layout,
       background_type: gallery.design.backgroundType,
+      background_gradient: gallery.design.backgroundGradient,
       background_r2_key: gallery.design.backgroundR2Key,
       theme: gallery.design.theme,
       accent_color: gallery.design.accent,
@@ -259,9 +264,13 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       headline_font_weight: gallery.design.headlineFontWeight,
       body_font: gallery.design.bodyFont,
       body_font_weight: gallery.design.bodyFontWeight,
-      music_track_r2_key: gallery.design.musicTrack || null,
+      music_track_name: gallery.design.musicTrackName || null,
+      music_track_r2_key: gallery.design.musicTrackR2Key,
       featured_video_id: featuredVideo ? videoDatabaseId(featuredVideo.id) : null,
-      enabled_buttons: gallery.design.topButtons,
+      enabled_buttons: {
+        ...gallery.design.topButtons,
+        backgroundGradient: gallery.design.backgroundGradient,
+      },
       allow_downloads: gallery.allowDownloads,
     },
     videos: gallery.videoItems.map((video, index) => ({
@@ -297,7 +306,7 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
       id: photoDatabaseId(photo.id),
       gallery_id: galleryId,
       album_id: photo.albumId ? albumDatabaseId(photo.albumId) : null,
-      r2_key: photo.r2Key ?? `media/photos/${gallery.id}/${photo.id}.jpg`,
+      r2_key: photo.r2Key ?? null,
       r2_bytes: photo.r2Bytes ?? 0,
       width: null,
       height: null,
@@ -316,9 +325,16 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
   const featuredVideo = videos.find((video) => video.id === bundle.design.featured_video_id) ?? videos[0];
   const designDefaults = defaultGalleryDesign(bundle.gallery.name, fallbackGradient);
   const enabledButtons = bundle.design.enabled_buttons ?? designDefaults.topButtons;
+  const savedBackgroundGradient = 'backgroundGradient' in enabledButtons
+    && typeof enabledButtons.backgroundGradient === 'string'
+    ? enabledButtons.backgroundGradient
+    : null;
   const design: GalleryDesign = {
     ...designDefaults,
     accent: bundle.design.accent_color ?? designDefaults.accent,
+    backgroundGradient: bundle.design.background_gradient
+      ?? savedBackgroundGradient
+      ?? designDefaults.backgroundGradient,
     backgroundR2Key: bundle.design.background_r2_key,
     backgroundType: bundle.design.background_type,
     eyebrow: bundle.design.heading_eyebrow ?? designDefaults.eyebrow,
@@ -338,7 +354,10 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
     layout: layoutSet.has(bundle.design.layout_template as GalleryDesign['layout'])
       ? bundle.design.layout_template as GalleryDesign['layout']
       : designDefaults.layout,
-    musicTrack: bundle.design.music_track_r2_key ?? designDefaults.musicTrack,
+    musicTrackName: bundle.design.music_track_name ?? '',
+    musicTrackR2Key: bundle.design.music_track_r2_key?.startsWith(`${bundle.gallery.account_id}/`)
+      ? bundle.design.music_track_r2_key
+      : null,
     subtitle: bundle.design.heading_subtitle ?? designDefaults.subtitle,
     theme: bundle.design.theme === 'light' ? 'light' : 'dark',
     title: bundle.design.heading_title ?? bundle.gallery.name,
@@ -369,7 +388,7 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
     autoExpire: Boolean(bundle.gallery.archived_at || bundle.gallery.storage_tier === 'archived'),
     passwordSet: Boolean(bundle.gallery.password_hash),
     passwordHash: null,
-    coverChosen: Boolean(bundle.gallery.cover_video_id || bundle.gallery.cover_photo_id),
+    coverChosen: Boolean(bundle.gallery.cover_video_id || bundle.gallery.cover_photo_id || videos.length),
     deliveryDraft: defaultDeliveryDraft(''),
     design,
     gradient: fallbackGradient,
@@ -392,7 +411,7 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
       paidUnlockLabel: video.paid_unlock_label ?? undefined,
       paidUnlockPriceCents: video.paid_unlock_price_cents ?? 30000,
       paidUnlockTagline: video.paid_unlock_tagline ?? undefined,
-      updatedAt: 'Updated from Supabase',
+      updatedAt: 'Recently updated',
     })),
     albums: albums.map((album) => ({
       id: album.id,

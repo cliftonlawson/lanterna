@@ -12,7 +12,12 @@
     "smoke:gallery": "node scripts/smoke-gallery.mjs",
     "test:gallery-password": "node scripts/test-gallery-password.mjs",
     "test:gallery-slugs": "node scripts/test-gallery-slugs.mjs",
+    "test:gallery-content": "node scripts/test-gallery-content-honesty.mjs",
+    "test:gallery-deletion": "node scripts/test-gallery-deletion.mjs",
     "test:media-task-ledger": "node scripts/test-honest-media-tasks.mjs",
+    "test:music": "node scripts/test-music-upload.mjs",
+    "test:r2-signing": "node scripts/test-r2-signing.mjs",
+    "test:user-copy": "node scripts/test-user-facing-copy.mjs",
     "test:upload-accounting": "node scripts/test-upload-accounting.mjs",
     "test:video-ingestion": "node scripts/test-dual-video-ingestion.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"

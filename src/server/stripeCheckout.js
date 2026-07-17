@@ -1,4 +1,4 @@
-import { errorJson, json, requireEnv } from './http.js';
+import { errorJson, json, requireEnv, safeSlug } from './http.js';
 import { publicGalleryAccessError } from './galleryAccess.js';
 import { createStreamPlayback } from './cloudflareStream.js';
 import { createR2PresignedGetUrl } from './r2Signing.js';
@@ -309,6 +309,13 @@ function sessionUnlockMediaKeys(video, downloadAllowed) {
   return [downloadAllowed ? video.r2_key : null, video.web_copy_r2_key, video.poster_r2_key].filter(Boolean);
 }
 
+function paidVideoDownloadFileName(video) {
+  const objectName = String(video.r2_key || '').split('/').pop() || '';
+  const extension = objectName.includes('.') ? objectName.split('.').pop() : '';
+  const baseName = safeSlug(video.title || 'wedding-film') || 'wedding-film';
+  return extension ? `${baseName}.${safeSlug(extension)}` : baseName;
+}
+
 async function downloadSettingsForGallery(env, gallery) {
   const [design, branding] = await Promise.all([
     supabaseRest(
@@ -342,12 +349,20 @@ async function unlockPayloadForPurchase(env, gallery, purchase) {
   for (const key of sessionUnlockMediaKeys(video, downloadAllowed)) {
     media[key] = await createR2PresignedGetUrl(env, { expiresInSeconds: 900, key });
   }
+  const download = downloadAllowed && video.r2_key
+    ? await createR2PresignedGetUrl(env, {
+      expiresInSeconds: 900,
+      key: video.r2_key,
+      responseContentDisposition: `attachment; filename="${paidVideoDownloadFileName(video)}"`,
+    })
+    : null;
   const stream = video.stream_uid && video.stream_ready !== false && env.CLOUDFLARE_STREAM_SIGNING_KEY_ID && env.CLOUDFLARE_STREAM_SIGNING_JWK
     ? { [video.stream_uid]: await createStreamPlayback(env, video.stream_uid, { expiresInSeconds: 900 }) }
     : {};
 
   return {
     buyerEmail: purchase.buyer_email || null,
+    download,
     downloadAllowed,
     media,
     stream,

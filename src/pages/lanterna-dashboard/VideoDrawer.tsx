@@ -14,6 +14,7 @@ import {
   uploadVideoMasterMultipart,
 } from './appApi';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
+import { userMessage } from '../../lib/userMessages';
 import { type DashboardGallery, type UploadJob } from './model';
 import { publicGalleryUrl } from './publicLinks';
 import { Panel, Toggle } from './shared';
@@ -76,7 +77,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
       replacementJob?.status,
     )
     : video?.processingStatus === 'processing'
-      ? 'Encoding replacement'
+      ? 'Preparing replacement'
       : video?.processingStatus === 'uploading'
         ? 'Uploading replacement'
         : '';
@@ -195,7 +196,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
       updateVideo({ posterR2Key: completed.r2Key, updatedAt: 'Poster updated' });
       onShowToast('Thumbnail uploaded');
     } catch (error) {
-      onShowToast(error instanceof Error ? error.message : 'Thumbnail upload failed');
+      onShowToast(userMessage(error, 'Thumbnail could not be uploaded. Try again.'));
     } finally {
       setPosterUploading(false);
       if (posterInputRef.current) posterInputRef.current.value = '';
@@ -221,7 +222,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
       setCaptureOpen(false);
       onShowToast('Frame saved as thumbnail');
     } catch (error) {
-      onShowToast(error instanceof Error ? error.message : 'Frame capture failed');
+      onShowToast(userMessage(error, 'Frame could not be saved. Try again.'));
     } finally {
       setPosterUploading(false);
     }
@@ -248,7 +249,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
         targetId: video.id,
         targetType: 'video',
       });
-      if (slot.r2.method !== 'MULTIPART') throw new Error('Replacement did not return an R2 multipart session.');
+      if (slot.r2.method !== 'MULTIPART') throw new Error('Video replacement could not start. Try again.');
       await onUploadStateChange();
 
       await uploadVideoMasterMultipart(
@@ -261,10 +262,10 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
       await startVideoPlaybackPreparation(gallery.id, slot.uploadJobId);
       setReplaceStage('preparing_playback');
       await onUploadStateChange();
-      onShowToast('Replacement master secured; preparing playback');
+      onShowToast('Replacement uploaded; preparing your film');
     } catch (error) {
       updateVideo({ processingStatus: video.streamUid || video.r2Key || video.webCopyR2Key ? video.processingStatus : 'errored', updatedAt: 'Replacement failed' });
-      onShowToast(error instanceof Error ? error.message : 'Replacement upload failed');
+      onShowToast(userMessage(error, 'Replacement could not be uploaded. Try again.'));
     } finally {
       setVideoReplacing(false);
       setReplaceStage('idle');
@@ -280,7 +281,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
       if (file) await replaceVideo(file);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
-      onShowToast(error instanceof Error ? error.message : 'Could not open video picker');
+      onShowToast(userMessage(error, 'Video picker could not be opened. Try again.'));
     }
   };
 
@@ -301,7 +302,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
             <div className="drawer-processing-overlay" aria-live="polite">
               <Loader2 size={26} />
               <strong>{pendingLabel}</strong>
-              <span>Playback and frame capture will update once the replacement is ready.</span>
+              <span>Viewing and frame capture will update once the replacement is ready.</span>
             </div>
           )}
         </div>
@@ -337,7 +338,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
               />
               {posterUrl ? <img alt="" src={posterUrl} /> : <Upload size={18} />}
               <strong>{posterUrl ? 'Thumbnail image' : 'No thumbnail image yet'}</strong>
-              <span>{posterUrl ? 'Shown as the poster frame before playback.' : 'Upload a JPG, PNG, or WebP poster frame for this film.'}</span>
+              <span>{posterUrl ? 'Shown as the poster frame before the film starts.' : 'Upload a JPG, PNG, or WebP poster frame for this film.'}</span>
               <button onClick={() => posterInputRef.current?.click()} disabled={posterUploading}>
                 <Upload size={15} /> {posterUploading ? 'Uploading' : posterUrl ? 'Replace thumbnail' : 'Upload thumbnail'}
               </button>
@@ -398,7 +399,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
                 <span><DollarSign size={20} /></span>
                 <div>
                   <strong>You receive ${payoutDollars} per unlock</strong>
-                  <p>Couple pays ${paidPriceDollars} / Lanterna fee 10% (${feeDollars}) / paid out to your studio.</p>
+                  <p>Couple pays ${paidPriceDollars} / LANTERNA fee 10% (${feeDollars}) / paid out to your studio.</p>
                 </div>
               </div>
             </>
@@ -455,14 +456,14 @@ function replacementStatusLabel(
   status: UploadJob['status'] | undefined,
 ) {
   if (status === 'paused') return `Replacement upload paused at ${progress}%`;
-  if (phase === 'master_secured') return 'Replacement master secured';
-  if (phase === 'starting_playback' || phase === 'preparing_playback') return 'Preparing replacement playback';
-  return `Uploading replacement master ${progress}%`;
+  if (phase === 'master_secured') return 'Replacement uploaded';
+  if (phase === 'starting_playback' || phase === 'preparing_playback') return 'Preparing replacement';
+  return `Uploading replacement ${progress}%`;
 }
 
 function replacementButtonLabel(statusLabel: string) {
-  if (statusLabel.startsWith('Uploading replacement master')) {
-    return statusLabel.replace('Uploading replacement master', 'Replacing');
+  if (statusLabel.startsWith('Uploading replacement')) {
+    return statusLabel.replace('Uploading replacement', 'Replacing');
   }
   if (statusLabel.includes('paused')) return 'Replacement paused';
   return 'Preparing replacement';

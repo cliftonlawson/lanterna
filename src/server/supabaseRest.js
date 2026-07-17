@@ -61,14 +61,14 @@ export async function accountForUser(env, userId, fetchImpl = fetch) {
     fetchImpl,
   );
   const accountId = rows?.[0]?.account_id;
-  if (!accountId) throw new Error('No Lanterna account membership found for this user.');
+  if (!accountId) throw new Error('No LANTERNA account membership found for this user.');
   return accountId;
 }
 
 export async function assertGalleryMembership(env, accountId, galleryId, fetchImpl = fetch) {
   const rows = await supabaseRest(
     env,
-    `galleries?select=id,slug,name,access_type,password_hash,status,account_id,cover_video_id,cover_photo_id&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(galleryId)}&deleted_at=is.null&limit=1`,
+    `galleries?select=id,slug,name,access_type,password_hash,status,account_id,cover_video_id,cover_photo_id,archived_at&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(galleryId)}&deleted_at=is.null&limit=1`,
     { headers: { accept: 'application/json' } },
     fetchImpl,
   );
@@ -80,7 +80,7 @@ export async function assertGalleryMembership(env, accountId, galleryId, fetchIm
 export async function publicGalleryBySlug(env, slug, fetchImpl = fetch) {
   const rows = await supabaseRest(
     env,
-    `galleries?select=id,account_id,slug,name,client_name,event_date,access_type,password_hash,status,source_file_expires_at,access_expires_at,storage_tier,is_extended,extended_until,cover_video_id,cover_photo_id,archived_at,deleted_at&slug=eq.${encodeURIComponent(slug)}&deleted_at=is.null&limit=1`,
+    `galleries?select=id,account_id,slug,name,client_name,event_date,project_type,access_type,password_hash,status,source_file_expires_at,access_expires_at,storage_tier,is_extended,extended_until,cover_video_id,cover_photo_id,archived_at,deleted_at&slug=eq.${encodeURIComponent(slug)}&deleted_at=is.null&limit=1`,
     { headers: { accept: 'application/json' } },
     fetchImpl,
   );

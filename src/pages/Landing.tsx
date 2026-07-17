@@ -32,7 +32,7 @@ type Plan = {
 
 const features = [
   {
-    desc: 'Drag and drop your videos. We handle encoding, compression, and delivery automatically.',
+    desc: 'Drag and drop your videos. We prepare every file and deliver it automatically.',
     icon: Upload,
     title: 'Upload in seconds',
   },
@@ -47,7 +47,7 @@ const features = [
     title: 'Know when they watch',
   },
   {
-    desc: 'Global CDN delivers your work at full quality, no matter where your client is.',
+    desc: 'Your galleries load quickly and preserve full quality wherever clients watch.',
     icon: Zap,
     title: 'Lightning fast delivery',
   },
@@ -57,9 +57,9 @@ const features = [
     title: 'Secure by default',
   },
   {
-    desc: 'Adaptive streaming ensures smooth, buffer-free playback on every device.',
+    desc: 'Films start quickly and play smoothly on every device.',
     icon: Play,
-    title: 'Cinema-quality playback',
+    title: 'Cinema-quality viewing',
   },
 ];
 
@@ -155,9 +155,9 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
       </div>
 
       <nav className="landing-nav" aria-label="Landing navigation">
-        <a className="landing-brand" href="#top" aria-label="Lanterna home">
+        <a className="landing-brand" href="#top" aria-label="LANTERNA home">
           <LanternLogo size={36} />
-          <span>Lanterna</span>
+          <span>LANTERNA</span>
         </a>
         <div className="landing-nav-links">
           <a href="#features">Features</a>
@@ -165,7 +165,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
           <a href="#footer">Blog</a>
         </div>
         <div className="landing-nav-actions">
-          <button className="landing-ghost" onClick={onTryDemo}>Try demo</button>
+          <button className="landing-ghost" onClick={onTryDemo}>Explore LANTERNA</button>
           <button className="landing-ghost" onClick={onGetStarted}>Sign in</button>
           <button className="landing-primary small" onClick={onGetStarted}>Get started</button>
         </div>
@@ -178,7 +178,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
             <span>like never before</span>
           </h1>
           <p>
-            Lanterna is the simplest way for filmmakers to share videos and photos with clients.
+            LANTERNA is the simplest way for filmmakers to share videos and photos with clients.
             Upload, organize, and deliver - to a gallery that feels like a premier, not a folder.
           </p>
           <div className="landing-hero-actions">
@@ -187,7 +187,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
             </button>
             <button className="landing-demo" onClick={onTryDemo}>
               <span><Play size={12} fill="currentColor" /></span>
-              Try the demo
+              Explore the workspace
             </button>
           </div>
           <HeroGalleryMockup />
@@ -231,7 +231,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
               <p>Monetize</p>
               <h2>
                 Make money on
-                <span>Lanterna</span>
+                <span>LANTERNA</span>
               </h2>
               <p>
                 Offer ceremony films, full speeches, rehearsal cuts, vertical reels, and extended edits as
@@ -277,7 +277,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
             Ready to illuminate
             <span>your client experience?</span>
           </h2>
-          <p>Join thousands of filmmakers delivering their best work through Lanterna.</p>
+          <p>Join thousands of filmmakers delivering their best work through LANTERNA.</p>
           <button className="landing-primary" onClick={onGetStarted}>Get started for free</button>
         </section>
       </main>
@@ -285,9 +285,9 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
       <footer className="landing-footer" id="footer">
         <a className="landing-footer-brand" href="#top">
           <LanternLogo size={24} />
-          <span>Lanterna</span>
+          <span>LANTERNA</span>
         </a>
-        <p>© 2026 Lanterna. All rights reserved.</p>
+        <p>© 2026 LANTERNA. All rights reserved.</p>
         <nav aria-label="Footer links">
           <a href="#footer">Privacy</a>
           <a href="#footer">Terms</a>

@@ -147,6 +147,7 @@ gallery_design
   accent_color         text null            -- per-gallery override of studio accent
   typography           text null            -- font choice key
   music_track_r2_key   text null
+  music_track_name     text null            -- original filename for studio-facing display
   featured_video_id    uuid null fk -> videos.id
   enabled_buttons      jsonb                -- e.g. {"share":true,"embed":false,"download":true}
   allow_downloads      boolean null         -- per-gallery override; null = inherit vendor_branding
@@ -336,7 +337,7 @@ upload_jobs
   id                  uuid pk
   account_id          uuid fk -> accounts.id
   gallery_id          uuid fk -> galleries.id
-  target_type         text                   -- video | photo | background | poster
+  target_type         text                   -- video | photo | background | poster | music
   target_id           uuid null              -- media id; gallery id for a background
   status              job_status             -- pending | uploading | paused | processing | complete | errored
   bytes_total         bigint

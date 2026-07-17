@@ -84,7 +84,12 @@ async function galleryPreflight(env, gallery) {
   if (!readyPlayableVideo) return { code: 'ready_video_required', message: 'Add at least one ready, playable film before publishing.' };
 
   if (!gallery.cover_video_id && !gallery.cover_photo_id) {
-    return { code: 'cover_required', message: 'Choose a cover before publishing.' };
+    await supabaseRest(env, `galleries?id=eq.${encodeURIComponent(gallery.id)}&account_id=eq.${encodeURIComponent(gallery.account_id)}`, {
+      method: 'PATCH',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({ cover_video_id: readyPlayableVideo.id }),
+    });
+    gallery.cover_video_id = readyPlayableVideo.id;
   }
 
   return null;
@@ -271,6 +276,9 @@ async function completeVerifiedDirectR2Upload(env, {
   targetType,
   uploadJobId,
 }) {
+  const completionRpc = targetType === 'music'
+    ? 'complete_verified_music_upload'
+    : 'complete_verified_r2_upload';
   const job = await uploadJobForTarget(env, {
     accountId,
     galleryId,
@@ -280,7 +288,7 @@ async function completeVerifiedDirectR2Upload(env, {
   });
 
   if (job.status === 'complete' && job.completed_at && Number(job.verified_bytes) > 0) {
-    return callUploadRpc(env, 'complete_verified_r2_upload', {
+    return callUploadRpc(env, completionRpc, {
       p_account_id: accountId,
       p_content_type: job.content_type,
       p_gallery_id: galleryId,
@@ -319,7 +327,7 @@ async function completeVerifiedDirectR2Upload(env, {
     };
   }
 
-  return callUploadRpc(env, 'complete_verified_r2_upload', {
+  return callUploadRpc(env, completionRpc, {
     p_account_id: accountId,
     p_content_type: verification.contentType,
     p_gallery_id: galleryId,
@@ -470,7 +478,7 @@ async function createGallery(request, env) {
         method: 'POST',
         headers: { prefer: 'return=minimal' },
         body: JSON.stringify({
-          allow_downloads: false,
+          allow_downloads: null,
           gallery_id: galleryId,
           heading_title: name,
         }),
@@ -565,6 +573,12 @@ async function deleteGallery(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
   const galleryId = requireString(body, 'galleryId');
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  if (!gallery.archived_at) {
+    return errorJson('Archive the gallery before deleting it permanently.', 409, {
+      code: 'gallery_must_be_archived',
+    });
+  }
   const result = await supabaseRest(env, 'rpc/request_gallery_soft_delete', {
     method: 'POST',
     body: JSON.stringify({
@@ -1430,6 +1444,62 @@ async function backgroundComplete(request, env) {
   });
 }
 
+async function musicSlot(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const fileName = requireString(body, 'fileName');
+  const contentType = String(body.contentType || '').trim().toLowerCase();
+
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const bytesTotal = Number(body.bytesTotal || 0);
+  if (!Number.isSafeInteger(bytesTotal) || bytesTotal <= 0) return errorJson('Upload size must be a positive integer.', 422);
+  if (!contentType.startsWith('audio/')) return errorJson('Choose an MP3, WAV, M4A, AAC, or OGG audio file.', 422);
+  const allowanceError = await requireUploadAllowance(env, accountId, bytesTotal);
+  if (allowanceError) return allowanceError;
+
+  const slot = await createDirectR2UploadSlot(env, {
+    accountId,
+    bytesTotal,
+    contentType,
+    fileName,
+    galleryId: gallery.id,
+    targetId: gallery.id,
+    targetType: 'music',
+  });
+
+  return json({
+    galleryId: gallery.id,
+    r2: slot.r2,
+    uploadJobId: slot.uploadJobId,
+  });
+}
+
+async function musicComplete(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const galleryId = requireString(body, 'galleryId');
+  const uploadJobId = requireString(body, 'uploadJobId');
+
+  const gallery = await assertGalleryMembership(env, accountId, galleryId);
+  const completion = await completeVerifiedDirectR2Upload(env, {
+    accountId,
+    galleryId: gallery.id,
+    targetId: gallery.id,
+    targetType: 'music',
+    uploadJobId,
+  });
+  if (completion.error) return completion.error;
+
+  return json({
+    alreadyCompleted: Boolean(completion.alreadyCompleted),
+    ok: true,
+    r2Key: completion.r2Key,
+    usageRecorded: Boolean(completion.usageRecorded),
+    verifiedBytes: Number(completion.verifiedBytes),
+  });
+}
+
 async function posterSlot(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
@@ -1583,6 +1653,30 @@ async function publicSignedMediaUrls(env, gallery, keys) {
   return signed;
 }
 
+function videoDownloadFileName(video) {
+  const objectName = String(video.r2_key || '').split('/').pop() || '';
+  const extension = objectName.includes('.') ? objectName.split('.').pop() : '';
+  const baseName = safeSlug(video.title || 'wedding-film') || 'wedding-film';
+  return extension ? `${baseName}.${safeSlug(extension)}` : baseName;
+}
+
+async function publicDownloadUrls(env, gallery, videos) {
+  const accountPrefix = `${gallery.account_id}/`;
+  const signed = {};
+
+  for (const video of videos) {
+    const key = String(video.r2_key || '').trim();
+    if (!video.download_enabled || !key.startsWith(accountPrefix)) continue;
+    signed[video.id] = await createR2PresignedGetUrl(env, {
+      expiresInSeconds: 900,
+      key,
+      responseContentDisposition: `attachment; filename="${videoDownloadFileName(video)}"`,
+    });
+  }
+
+  return signed;
+}
+
 async function streamPlaybackUrls(env, videos) {
   if (!env.CLOUDFLARE_STREAM_SIGNING_KEY_ID || !env.CLOUDFLARE_STREAM_SIGNING_JWK) return {};
   const playableVideos = videos.filter((video) => video.stream_uid && video.stream_ready !== false && !video.paid_unlock_enabled);
@@ -1633,8 +1727,13 @@ async function passwordMatches(gallery, password) {
 
 async function publicGalleryPayload(env, gallery) {
   const videos = await supabaseRest(env, `videos?select=id,title,duration_seconds,r2_key,stream_uid,stream_ready,web_copy_r2_key,poster_r2_key,processing_status,download_enabled,visible_in_gallery,paid_unlock_enabled,paid_unlock_price_cents,paid_unlock_currency,paid_unlock_label,paid_unlock_tagline&gallery_id=eq.${encodeURIComponent(gallery.id)}&visible_in_gallery=eq.true&deleted_at=is.null&order=sort_order.asc`);
-  const publishableVideos = videos.filter((video) => video.processing_status === 'ready' || (video.processing_status == null && video.stream_ready !== false));
+  const publishableVideos = videos.filter((video) => {
+    const ready = video.processing_status === 'ready' || (video.processing_status == null && video.stream_ready !== false);
+    const playable = Boolean(video.r2_key || video.web_copy_r2_key || (video.stream_uid && video.stream_ready !== false));
+    return ready && playable;
+  });
   const photos = await supabaseRest(env, `photos?select=id,album_id,r2_key,width,height&gallery_id=eq.${encodeURIComponent(gallery.id)}&deleted_at=is.null&order=sort_order.asc`);
+  const publishablePhotos = photos.filter((photo) => Boolean(photo.r2_key));
   const design = await supabaseRest(env, `gallery_design?select=*&gallery_id=eq.${encodeURIComponent(gallery.id)}&limit=1`);
   const branding = await supabaseRest(env, `vendor_branding?select=studio_name,tagline,accent_color,custom_domain,default_downloads&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`);
   const designRow = design?.[0] ?? null;
@@ -1650,6 +1749,7 @@ async function publicGalleryPayload(env, gallery) {
   }));
   const mediaKeys = [
     designRow?.background_r2_key,
+    designRow?.music_track_r2_key,
     ...resolvedVideos.flatMap((video) => {
       if (video.paid_unlock_enabled) return [video.poster_r2_key];
       return [
@@ -1658,12 +1758,16 @@ async function publicGalleryPayload(env, gallery) {
         video.poster_r2_key,
       ];
     }),
-    ...photos.map((photo) => photo.r2_key),
+    ...publishablePhotos.map((photo) => photo.r2_key),
   ];
-  const media = await publicSignedMediaUrls(env, gallery, mediaKeys);
+  const [downloads, media] = await Promise.all([
+    publicDownloadUrls(env, gallery, resolvedVideos.filter((video) => !video.paid_unlock_enabled)),
+    publicSignedMediaUrls(env, gallery, mediaKeys),
+  ]);
   const stream = await streamPlaybackUrls(env, resolvedVideos);
 
   return {
+    downloads,
     gallery: {
       accessType: gallery.access_type,
       allowDownloads: galleryAllowsDownloads,
@@ -1671,7 +1775,8 @@ async function publicGalleryPayload(env, gallery) {
       design: designRow,
       eventDate: gallery.event_date,
       name: gallery.name,
-      photos,
+      photos: publishablePhotos,
+      projectType: gallery.project_type,
       slug: gallery.slug,
       status: gallery.status,
       videos: resolvedVideos,
@@ -1679,9 +1784,9 @@ async function publicGalleryPayload(env, gallery) {
     media,
     stream,
     workspace: {
-      accentColor: brandingRow?.accent_color ?? '#FFB24D',
+      accentColor: brandingRow?.accent_color ?? '#6EE7F9',
       customDomain: brandingRow?.custom_domain ?? null,
-      studioName: brandingRow?.studio_name ?? 'Lanterna Studio',
+      studioName: brandingRow?.studio_name ?? 'LANTERNA Studio',
       tagline: brandingRow?.tagline ?? null,
     },
   };
@@ -1841,6 +1946,8 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'media/process-ready') return await processReady(request, env);
     if (request.method === 'POST' && path === 'background/slot') return await backgroundSlot(request, env);
     if (request.method === 'POST' && path === 'background/complete') return await backgroundComplete(request, env);
+    if (request.method === 'POST' && path === 'music/slot') return await musicSlot(request, env);
+    if (request.method === 'POST' && path === 'music/complete') return await musicComplete(request, env);
     if (request.method === 'POST' && path === 'poster/slot') return await posterSlot(request, env);
     if (request.method === 'POST' && path === 'poster/complete') return await posterComplete(request, env);
     if (request.method === 'POST' && path === 'poster/capture-frame') return await posterCaptureFrame(request, env);
@@ -1861,6 +1968,6 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
 
     return errorJson('API route not found.', 404);
   } catch (error) {
-    return errorJson(error instanceof Error ? error.message : 'Lanterna API request failed.', 400);
+    return errorJson(error instanceof Error ? error.message : 'LANTERNA API request failed.', 400);
   }
 }

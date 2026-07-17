@@ -1,5 +1,6 @@
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { clearUploadJobRemote, deleteGalleryMediaRemote, recordGalleryDelivery, setGalleryArchivedRemote } from './appApi';
+import { userMessage } from '../../lib/userMessages';
+import { clearUploadJobRemote, deleteGalleryMediaRemote, deleteGalleryPermanentlyRemote, recordGalleryDelivery, setGalleryArchivedRemote } from './appApi';
 import { parseRecipientEmails, upsertSentRecipients } from './delivery';
 import {
   loadStoredGalleries,
@@ -110,7 +111,6 @@ function hasUploadedVideoAsset(video: VideoRecord) {
 }
 
 function isVisibleDashboardVideo(video: VideoRecord) {
-  if (video.processing_status !== 'uploading' && video.processing_status !== 'processing') return true;
   return hasUploadedVideoAsset(video);
 }
 
@@ -191,6 +191,32 @@ function isMissingPaidUnlockColumn(error: unknown) {
   return message.includes('paid_unlock_') || message.includes('paidUnlock');
 }
 
+function isMissingBackgroundGradientColumn(error: unknown) {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'object' && error && 'message' in error
+      ? String(error.message)
+      : String(error ?? '');
+  return message.includes('background_gradient');
+}
+
+function designWithoutBackgroundGradient(row: Record<string, unknown>) {
+  const withoutColumn = Object.fromEntries(
+    Object.entries(row).filter(([key]) => key !== 'background_gradient'),
+  );
+  const enabledButtons = row.enabled_buttons && typeof row.enabled_buttons === 'object' && !Array.isArray(row.enabled_buttons)
+    ? row.enabled_buttons as Record<string, unknown>
+    : {};
+
+  return {
+    ...withoutColumn,
+    enabled_buttons: {
+      ...enabledButtons,
+      backgroundGradient: row.background_gradient,
+    },
+  };
+}
+
 async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: string) {
   if (!canPersistGalleryToSchema(gallery)) {
     throw new Error(`${gallery.name} needs a password before it can be saved to Supabase.`);
@@ -205,10 +231,13 @@ async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: strin
   const galleryWrite = Object.fromEntries(
     Object.entries(galleryWithoutDeferredMediaRefs).filter(([key]) => !serverOwnedGalleryFields.has(key)),
   );
-  const designWithoutDeferredMediaRefs = {
-    ...bundle.design,
-    featured_video_id: null,
-  };
+  const designWithoutDeferredMediaRefs = Object.fromEntries(
+    Object.entries({ ...bundle.design, featured_video_id: null }).filter(([key]) => ![
+      'background_r2_key',
+      'music_track_name',
+      'music_track_r2_key',
+    ].includes(key)),
+  );
 
   const { error: galleryError } = await supabase.from('galleries').upsert(galleryWrite);
   if (galleryError) throw galleryError;
@@ -233,7 +262,12 @@ async function saveGalleryToSupabase(gallery: DashboardGallery, accountId: strin
     if (error) throw error;
   }
 
-  const { error: designError } = await supabase.from('gallery_design').upsert(designWithoutDeferredMediaRefs);
+  let { error: designError } = await supabase.from('gallery_design').upsert(designWithoutDeferredMediaRefs);
+  if (designError && isMissingBackgroundGradientColumn(designError)) {
+    ({ error: designError } = await supabase
+      .from('gallery_design')
+      .upsert(designWithoutBackgroundGradient(designWithoutDeferredMediaRefs)));
+  }
   if (designError) throw designError;
 
   const { error: galleryCoverError } = await supabase
@@ -310,6 +344,7 @@ export async function loadDashboardGalleries() {
         heading_subtitle: null,
         layout_template: 'lumen',
         background_type: 'image' as const,
+        background_gradient: null,
         background_r2_key: null,
         theme: 'dark',
         accent_color: null,
@@ -319,6 +354,7 @@ export async function loadDashboardGalleries() {
         body_font: 'DM Sans',
         body_font_weight: 400,
         music_track_r2_key: null,
+        music_track_name: null,
         featured_video_id: null,
         enabled_buttons: { share: true, embed: false, download: true },
         allow_downloads: null,
@@ -333,7 +369,7 @@ export async function loadDashboardGalleries() {
         (album) => `${album.sort_order}:${album.name}`,
       );
       const galleryPhotos = photos
-        .filter((photo) => photo.gallery_id === gallery.id)
+        .filter((photo) => photo.gallery_id === gallery.id && Boolean(photo.r2_key))
         .slice();
 
       return schemaBundleToGallery({
@@ -350,7 +386,7 @@ export async function loadDashboardGalleries() {
     saveStoredGalleries(merged);
     return merged;
   } catch (error) {
-    console.warn('Lanterna dashboard loaded local galleries because Supabase load failed', error);
+    console.warn('LANTERNA dashboard loaded local galleries because Supabase load failed', error);
     return localGalleries;
   }
 }
@@ -396,7 +432,7 @@ export async function loadWorkspaceAccount(): Promise<WorkspaceAccount> {
     saveStoredWorkspaceAccount(workspace);
     return workspace;
   } catch (error) {
-    console.warn('Lanterna workspace loaded local account data because Supabase load failed', error);
+    console.warn('LANTERNA workspace loaded local account data because Supabase load failed', error);
     return localWorkspace;
   }
 }
@@ -425,7 +461,7 @@ export async function saveWorkspaceAccount(workspace: WorkspaceAccount): Promise
 
     return { mode: 'supabase', ok: true, workspace: { ...workspace, accountId } };
   } catch (error) {
-    console.warn('Lanterna workspace stayed local because Supabase save failed', error);
+    console.warn('LANTERNA workspace stayed local because Supabase save failed', error);
     return {
       mode: 'local',
       ok: true,
@@ -436,7 +472,10 @@ export async function saveWorkspaceAccount(workspace: WorkspaceAccount): Promise
 }
 
 export async function loadUploadJobs() {
-  const localJobs = loadStoredUploadJobs();
+  const localJobs = loadStoredUploadJobs().map((job) => ({
+    ...job,
+    errorMessage: job.errorMessage ? userMessage(job.errorMessage, 'Upload needs attention. Try again.') : undefined,
+  }));
 
   if (!isSupabaseConfigured) return localJobs;
 
@@ -482,7 +521,14 @@ export async function loadUploadJobs() {
       if (!targetExists || terminalTargets.has(targetKey)) return false;
       terminalTargets.add(targetKey);
       return true;
-    }).map((job) => ({
+    }).map((job) => {
+      const errorMessage = job.error_message || (activeStatuses.has(job.status) && !(
+        job.target_type === 'video'
+          ? validVideoIds.has(job.target_id)
+          : validPhotoIds.has(job.target_id)
+      ) ? 'Upload target is missing. Retry this upload.' : undefined);
+
+      return {
       id: job.id,
       galleryId: job.gallery_id,
       targetType: job.target_type,
@@ -499,19 +545,16 @@ export async function loadUploadJobs() {
       bytesUploaded: Number(job.bytes_uploaded),
       createdAt: job.created_at,
       errorCode: job.error_code ?? undefined,
-      errorMessage: job.error_message || (activeStatuses.has(job.status) && !(
-        job.target_type === 'video'
-          ? validVideoIds.has(job.target_id)
-          : validPhotoIds.has(job.target_id)
-      ) ? 'Upload target is missing. Retry this upload.' : undefined),
+      errorMessage: errorMessage ? userMessage(errorMessage, 'Upload needs attention. Try again.') : undefined,
       isReplacement: Boolean(job.is_replacement),
       uploadPhase: job.upload_phase ?? undefined,
-    }));
+      };
+    });
 
     saveStoredUploadJobs(jobs);
     return jobs;
   } catch (error) {
-    console.warn('Lanterna upload jobs loaded locally because Supabase load failed', error);
+    console.warn('LANTERNA upload jobs loaded locally because Supabase load failed', error);
     return localJobs;
   }
 }
@@ -530,7 +573,7 @@ export async function clearUploadJob(job: UploadJob): Promise<SaveResult> {
 
     return { mode: 'supabase', ok: true };
   } catch (error) {
-    console.warn('Lanterna upload job clear stayed local because Supabase delete failed', error);
+    console.warn('LANTERNA upload job clear stayed local because Supabase delete failed', error);
     return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase upload job delete failed' };
   }
 }
@@ -547,7 +590,7 @@ export async function softDeleteGalleryMedia(
 
     return { mode: 'supabase', ok: true };
   } catch (error) {
-    console.warn('Lanterna media delete stayed local because Supabase soft-delete failed', error);
+    console.warn('LANTERNA media delete stayed local because Supabase soft-delete failed', error);
     return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase media delete failed' };
   }
 }
@@ -557,6 +600,12 @@ export async function setGalleryArchived(galleryId: string, archived: boolean): 
 
   await setGalleryArchivedRemote(galleryId, archived);
   return { mode: 'supabase', ok: true };
+}
+
+export async function permanentlyDeleteGallery(galleryId: string): Promise<SaveResult> {
+  if (isSupabaseConfigured) await deleteGalleryPermanentlyRemote(galleryId);
+  saveStoredGalleries(loadStoredGalleries().filter((gallery) => gallery.id !== galleryId));
+  return { mode: isSupabaseConfigured ? 'supabase' : 'local', ok: true };
 }
 
 export async function saveDashboardGalleries(galleries: DashboardGallery[], reason: SaveReason = 'autosave'): Promise<SaveResult> {
@@ -572,8 +621,51 @@ export async function saveDashboardGalleries(galleries: DashboardGallery[], reas
     await Promise.all(validGalleries.map((gallery) => saveGalleryToSupabase(gallery, accountId)));
     return { mode: 'supabase', ok: true };
   } catch (error) {
-    console.warn(`Lanterna ${reason} stayed local because Supabase save failed`, error);
+    console.warn(`LANTERNA ${reason} stayed local because Supabase save failed`, error);
     return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase save failed' };
+  }
+}
+
+export async function saveDashboardGalleryDesign(
+  galleries: DashboardGallery[],
+  galleryId: string,
+): Promise<SaveResult> {
+  const localResult = persistLocal(galleries);
+
+  if (!isSupabaseConfigured) return localResult;
+
+  try {
+    const accountId = await currentAccountId();
+    if (!accountId) throw new Error('Supabase account membership is missing.');
+
+    const gallery = galleries.find((item) => item.id === galleryId);
+    if (!gallery) throw new Error('Gallery is missing.');
+
+    const bundle = galleryToSchemaBundle(gallery, accountId);
+    const editableDesign = Object.fromEntries(
+      Object.entries(bundle.design).filter(([key]) => ![
+        'background_r2_key',
+        'gallery_id',
+        'music_track_r2_key',
+        'music_track_name',
+      ].includes(key)),
+    );
+    let { error } = await supabase
+      .from('gallery_design')
+      .update(editableDesign)
+      .eq('gallery_id', galleryId);
+    if (error && isMissingBackgroundGradientColumn(error)) {
+      ({ error } = await supabase
+        .from('gallery_design')
+        .update(designWithoutBackgroundGradient(editableDesign))
+        .eq('gallery_id', galleryId));
+    }
+    if (error) throw error;
+
+    return { mode: 'supabase', ok: true };
+  } catch (error) {
+    console.warn('LANTERNA design stayed local because Supabase save failed', error);
+    return { mode: 'local', ok: true, reason: error instanceof Error ? error.message : 'Supabase design save failed' };
   }
 }
 
@@ -591,10 +683,6 @@ export async function deliverGallery(gallery: DashboardGallery): Promise<Deliver
   }
 
   try {
-    const accountId = await currentAccountId();
-    if (!accountId) throw new Error('Supabase account membership is missing.');
-
-    await saveGalleryToSupabase(gallery, accountId);
     await recordGalleryDelivery({
       galleryId: gallery.id,
       message: gallery.deliveryDraft.message,
@@ -603,7 +691,7 @@ export async function deliverGallery(gallery: DashboardGallery): Promise<Deliver
 
     return { mode: 'supabase', ok: true, gallery: deliveredGallery, recipients };
   } catch (error) {
-    console.warn('Lanterna delivery failed server preflight or persistence', error);
+    console.warn('LANTERNA delivery failed server preflight or persistence', error);
     throw error;
   }
 }

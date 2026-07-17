@@ -23,20 +23,18 @@ export function AppShell({
   onFolderChange,
   onViewChange,
 }: Props) {
-  const isFocusedWorkspace = view === 'studio' || view === 'upload';
-
   const openGalleries = (project: ProjectName | null) => {
     onViewChange('galleries');
     onFolderChange(project);
   };
 
   return (
-    <div className={`lanterna-app ${theme} ${isFocusedWorkspace ? 'workspace-focus' : ''}`}>
+    <div className={`lanterna-app ${theme}`}>
       <aside className="ld-sidebar">
-        <button className="brand-block" onClick={() => openGalleries(null)}>
+        <button aria-label="Open all galleries" className="brand-block" onClick={() => openGalleries(null)}>
           <LanternLogo size={42} />
           <span>
-            <strong>Lanterna</strong>
+            <strong>LANTERNA</strong>
             <small>{workspace.studioName}</small>
           </span>
         </button>
@@ -48,7 +46,7 @@ export function AppShell({
         <div className="nav-label">Projects</div>
         {projectNames.map((name) => (
           <button key={name} className={navClass(view === 'galleries' && folder === name)} onClick={() => openGalleries(name)}>
-            <i /> <strong className="project-initial">{name[0]}</strong> <span>{name}</span> <em>{galleries.filter((gallery) => gallery.project === name).length}</em>
+            <i className={`project-dot project-${name.toLowerCase()}`} /> <span>{name}</span> <em>{galleries.filter((gallery) => gallery.project === name).length}</em>
           </button>
         ))}
 
@@ -57,7 +55,7 @@ export function AppShell({
           <SlidersHorizontal size={18} /> <span>Vendor Dashboard</span>
         </button>
         <div className="sidebar-spacer" />
-        <button className="user-card" onClick={() => onViewChange('account')}>
+        <button aria-label={`Open account settings for ${workspace.userName}`} className="user-card" onClick={() => onViewChange('account')}>
           <b>{workspace.userName.slice(0, 1).toUpperCase()}</b>
           <span><strong>{workspace.userName}</strong><small>{workspace.userEmail}</small></span>
           <ChevronRight size={16} />

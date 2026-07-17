@@ -21,7 +21,7 @@ async function postApi<T>(path: string, body: unknown) {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.error ?? `Lanterna API failed (${response.status})`);
+    throw new Error(payload?.error ?? `LANTERNA API failed (${response.status})`);
   }
 
   return await response.json() as T;
@@ -79,7 +79,7 @@ export async function setGalleryArchivedRemote(galleryId: string, archived: bool
   });
 }
 
-export async function softDeleteGalleryRemote(galleryId: string) {
+export async function deleteGalleryPermanentlyRemote(galleryId: string) {
   return postApi<{
     alreadyDeleted: boolean;
     deletedAt: string;
@@ -303,6 +303,36 @@ export async function completeBackgroundUpload(input: {
   });
 }
 
+export async function createMusicUploadSlot(input: {
+  bytesTotal: number;
+  contentType: string;
+  fileName: string;
+  galleryId: string;
+}) {
+  return postApi<BackgroundSlotResponse>('/api/music/slot', {
+    bytesTotal: input.bytesTotal,
+    contentType: input.contentType,
+    fileName: input.fileName,
+    galleryId: input.galleryId,
+  });
+}
+
+export async function completeMusicUpload(input: {
+  galleryId: string;
+  uploadJobId: string;
+}) {
+  return postApi<{
+    alreadyCompleted: boolean;
+    ok: boolean;
+    r2Key: string;
+    usageRecorded: boolean;
+    verifiedBytes: number;
+  }>('/api/music/complete', {
+    galleryId: input.galleryId,
+    uploadJobId: input.uploadJobId,
+  });
+}
+
 export async function createPosterUploadSlot(input: {
   bytesTotal: number;
   contentType: string;
@@ -391,6 +421,7 @@ export async function getStreamPlayback(galleryId: string, streamUids: string[])
 }
 
 export type PublicGalleryPayload = {
+  downloads?: Record<string, SignedMediaUrl>;
   gallery: {
     accessType: string;
     allowDownloads: boolean;
@@ -399,6 +430,7 @@ export type PublicGalleryPayload = {
     eventDate: string | null;
     name: string;
     photos: Array<Record<string, unknown>>;
+    projectType: 'wedding' | 'engagement' | 'portrait' | null;
     slug: string;
     status: string;
     videos: Array<Record<string, unknown>>;
@@ -449,6 +481,7 @@ export async function unlockPublicGallery(slug: string, password: string) {
 
 export type PaidUnlockSessionPayload = {
   buyerEmail: string | null;
+  download?: SignedMediaUrl | null;
   downloadAllowed: boolean;
   media: Record<string, SignedMediaUrl>;
   stream?: Record<string, SignedStreamPlayback>;

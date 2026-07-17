@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Lock, RefreshCw, Share2, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Download, Lock, Music2, Pause, Play, RefreshCw, Share2, X } from 'lucide-react';
 import {
   createPaidUnlockCheckout,
   getPublicGallery,
@@ -23,6 +23,7 @@ import {
   type WorkspaceAccount,
 } from './lanterna-dashboard/model';
 import { clampFontWeight, DEFAULT_BODY_WEIGHT, DEFAULT_HEADLINE_WEIGHT } from './lanterna-dashboard/fonts';
+import { userMessage } from '../lib/userMessages';
 
 type PublicGalleryPageProps = {
   slug: string;
@@ -50,7 +51,7 @@ export function PublicGalleryPage({ slug }: PublicGalleryPageProps) {
         setState({ galleryName: payload.gallery?.name ?? 'Private gallery', status: 'locked' });
         return;
       }
-      setState({ error: error.message, status: 'error', statusCode: error.status });
+      setState({ error: userMessage(error, 'This gallery could not be loaded. Try again.'), status: 'error', statusCode: error.status });
     });
 
     return () => {
@@ -126,7 +127,7 @@ function PublicPasswordGate({
     try {
       onUnlock(await unlockPublicGallery(slug, trimmed));
     } catch (unlockError) {
-      setSubmitError(unlockError instanceof Error ? unlockError.message : 'Incorrect gallery password.');
+      setSubmitError(userMessage(unlockError, 'That password did not work. Try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -159,6 +160,7 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
   const mobile = useMediaQuery('(max-width: 540px)');
   const [selectedFilm, setSelectedFilm] = useState<PreviewFilm | null>(null);
   const [lockedFilm, setLockedFilm] = useState<PreviewFilm | null>(null);
+  const [copiedAction, setCopiedAction] = useState('');
   const [verifiedUnlocks, setVerifiedUnlocks] = useState<Record<string, PaidUnlockSessionPayload>>({});
   const baseMediaUrls = useMemo(() => Object.fromEntries(
     Object.entries(payload.media ?? {}).map(([key, signed]) => [key, signed.url]),
@@ -167,6 +169,18 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
     ...baseMediaUrls,
     ...Object.fromEntries(Object.values(verifiedUnlocks).flatMap((unlock) => Object.entries(unlock.media).map(([key, signed]) => [key, signed.url]))),
   }), [baseMediaUrls, verifiedUnlocks]);
+  const musicUrl = gallery.design.musicTrackR2Key ? mediaUrls[gallery.design.musicTrackR2Key] ?? '' : '';
+  const downloadUrls = useMemo(() => ({
+    ...Object.fromEntries(Object.entries(payload.downloads ?? {}).map(([videoId, signed]) => [videoId, signed.url])),
+    ...Object.fromEntries(Object.values(verifiedUnlocks).flatMap((unlock) => unlock.download ? [[unlock.videoId, unlock.download.url]] : [])),
+  }), [payload.downloads, verifiedUnlocks]);
+  const deliveredGallery = useMemo(() => ({
+    ...gallery,
+    videoItems: gallery.videoItems.map((video) => ({
+      ...video,
+      downloadEnabled: video.downloadEnabled && Boolean(downloadUrls[video.id]),
+    })),
+  }), [downloadUrls, gallery]);
   const streamPlayback = useMemo(() => ({
     ...(payload.stream ?? {}),
     ...Object.assign({}, ...Object.values(verifiedUnlocks).map((unlock) => unlock.stream ?? {})),
@@ -184,6 +198,43 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
       return;
     }
     setSelectedFilm(film);
+  };
+  const runGalleryAction = (action: string) => {
+    const galleryUrl = new URL(window.location.href);
+    galleryUrl.searchParams.delete('film');
+    galleryUrl.searchParams.delete('unlock_session');
+
+    if (action === 'Share') {
+      void navigator.clipboard?.writeText(galleryUrl.toString()).then(() => {
+        setCopiedAction('Share');
+        window.setTimeout(() => setCopiedAction(''), 1600);
+      });
+      return;
+    }
+
+    if (action === 'Embed') {
+      const embed = `<iframe src="${galleryUrl.toString()}" title="${gallery.name}" allowfullscreen></iframe>`;
+      void navigator.clipboard?.writeText(embed).then(() => {
+        setCopiedAction('Embed');
+        window.setTimeout(() => setCopiedAction(''), 1600);
+      });
+      return;
+    }
+
+    if (action !== 'Download') return;
+    const video = gallery.videoItems.find((candidate) => {
+      return candidate.downloadEnabled !== false && Boolean(downloadUrls[candidate.id]);
+    });
+    const downloadUrl = video ? downloadUrls[video.id] : '';
+    if (!gallery.allowDownloads || !video || !downloadUrl) return;
+
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = video.title || gallery.name;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   useEffect(() => {
@@ -223,14 +274,66 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
     <main className={`public-gallery-page ${mobile ? 'is-mobile' : ''}`}>
       <section className="public-gallery-stage">
         {mobile ? (
-          <GalleryMobilePreviewFrame gallery={gallery} workspace={workspace} className="public-gallery-mobile" mediaUrls={mediaUrls} publicMode onFilmSelect={selectFilm} />
+          <GalleryMobilePreviewFrame actionLabels={{ Embed: copiedAction === 'Embed' ? 'Copied' : 'Embed', Share: copiedAction === 'Share' ? 'Copied' : 'Share' }} gallery={deliveredGallery} workspace={workspace} className="public-gallery-mobile" mediaUrls={mediaUrls} publicMode onAction={runGalleryAction} onFilmSelect={selectFilm} />
         ) : (
-          <GalleryPreviewFrame gallery={gallery} workspace={workspace} className="public-gallery-preview" crop mediaUrls={mediaUrls} publicMode onFilmSelect={selectFilm} />
+          <GalleryPreviewFrame actionLabels={{ Embed: copiedAction === 'Embed' ? 'Copied' : 'Embed', Share: copiedAction === 'Share' ? 'Copied' : 'Share' }} gallery={deliveredGallery} workspace={workspace} className="public-gallery-preview" crop mediaUrls={mediaUrls} publicMode onAction={runGalleryAction} onFilmSelect={selectFilm} />
         )}
       </section>
-      {selectedFilm && <PublicFilmPlayer film={selectedFilm} gallery={gallery} mediaUrls={mediaUrls} streamPlayback={streamPlayback} onClose={() => setSelectedFilm(null)} />}
+      {musicUrl && (
+        <BackgroundMusic
+          name={gallery.design.musicTrackName}
+          suspended={Boolean(selectedFilm || lockedFilm)}
+          url={musicUrl}
+        />
+      )}
+      {selectedFilm && <PublicFilmPlayer downloadUrls={downloadUrls} film={selectedFilm} gallery={deliveredGallery} mediaUrls={mediaUrls} streamPlayback={streamPlayback} onClose={() => setSelectedFilm(null)} />}
       {lockedFilm && <PublicPaidUnlockModal film={lockedFilm} gallery={gallery} onClose={() => setLockedFilm(null)} onUnlock={applyPaidUnlock} />}
     </main>
+  );
+}
+
+function BackgroundMusic({ name, suspended, url }: { name: string; suspended: boolean; url: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [requested, setRequested] = useState(false);
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (suspended || !requested) {
+      audio.pause();
+      setPlaying(false);
+      return;
+    }
+
+    void audio.play().then(() => setPlaying(true)).catch(() => {
+      setRequested(false);
+      setPlaying(false);
+    });
+  }, [requested, suspended, url]);
+
+  return (
+    <div className="public-gallery-music">
+      <audio
+        loop
+        onPause={() => setPlaying(false)}
+        onPlay={() => setPlaying(true)}
+        preload="metadata"
+        ref={audioRef}
+        src={url}
+      />
+      <button
+        aria-label={requested ? `Pause background music${name ? `: ${name}` : ''}` : `Play background music${name ? `: ${name}` : ''}`}
+        aria-pressed={requested}
+        onClick={() => setRequested((current) => !current)}
+        title={name || 'Background music'}
+        type="button"
+      >
+        <Music2 aria-hidden="true" size={16} />
+        <span>{suspended && requested ? 'Music paused' : playing ? 'Pause music' : 'Play music'}</span>
+        {playing ? <Pause aria-hidden="true" size={14} /> : <Play aria-hidden="true" size={14} fill="currentColor" />}
+      </button>
+    </div>
   );
 }
 
@@ -246,7 +349,7 @@ function publicPreviewFilm(video: MediaVideo, index: number): PreviewFilm {
     paidUnlockTagline: video.paidUnlockTagline,
     sourceVideoId: video.id,
     title: video.title,
-    tone: index === 0 ? '#C4AE88' : '#CDB998',
+    tone: index === 0 ? '#2F5586' : '#536F8F',
   };
 }
 
@@ -305,7 +408,7 @@ function PublicPaidUnlockModal({
               void createPaidUnlockCheckout(gallery.id, film.sourceVideoId).then(({ checkoutUrl }) => {
                 window.location.assign(checkoutUrl);
               }).catch((error) => {
-                setCheckoutMessage(error instanceof Error ? error.message : 'Checkout could not start.');
+                setCheckoutMessage(userMessage(error, 'Checkout could not start. Try again.'));
                 setCheckoutLoading(false);
               });
             }}
@@ -324,7 +427,7 @@ function PublicPaidUnlockModal({
               void recoverPaidUnlock(gallery.id, film.sourceVideoId, recoverEmail).then((unlock) => {
                 onUnlock(unlock);
               }).catch((error) => {
-                setCheckoutMessage(error instanceof Error ? error.message : 'Unlock could not be found.');
+                setCheckoutMessage(userMessage(error, 'We could not find that unlock. Check the email and try again.'));
               }).finally(() => {
                 setRecoverLoading(false);
               });
@@ -351,12 +454,14 @@ function PublicPaidUnlockModal({
 }
 
 function PublicFilmPlayer({
+  downloadUrls,
   film,
   gallery,
   mediaUrls,
   streamPlayback,
   onClose,
 }: {
+  downloadUrls: Record<string, string>;
   film: PreviewFilm;
   gallery: DashboardGallery;
   mediaUrls: Record<string, string>;
@@ -370,8 +475,7 @@ function PublicFilmPlayer({
   const stream = sourceVideo?.streamUid ? streamPlayback[sourceVideo.streamUid] : null;
   const posterUrl = sourceVideo?.posterR2Key && !/\.tiff?($|\?)/i.test(sourceVideo.posterR2Key) ? mediaUrls[sourceVideo.posterR2Key] : stream?.thumbnailUrl ?? '';
   const streamUrl = stream?.iframeUrl ?? '';
-  const downloadKey = sourceVideo?.r2Key || sourceVideo?.webCopyR2Key || null;
-  const downloadUrl = downloadKey ? mediaUrls[downloadKey] : '';
+  const downloadUrl = sourceVideo ? downloadUrls[sourceVideo.id] : '';
   const downloadAllowed = Boolean(sourceVideo?.downloadEnabled !== false && downloadUrl);
 
   useEffect(() => {
@@ -481,7 +585,7 @@ function publicPayloadToDashboardGallery(payload: PublicGalleryPayload): Dashboa
       r2Key: typeof photo.r2_key === 'string' ? photo.r2_key : null,
     })),
     photos: payload.gallery.photos.length,
-    project: 'Weddings',
+    project: payload.gallery.projectType === 'engagement' ? 'Engagements' : payload.gallery.projectType === 'portrait' ? 'Portraits' : 'Weddings',
     recipients: [],
     status: publicStatus(payload.gallery.status),
     videoItems: videos,
@@ -494,10 +598,14 @@ function publicDesign(rawDesign: Record<string, unknown> | null, fallbackTitle: 
   const defaults = defaultGalleryDesign(fallbackTitle);
   const headlineFont = text(rawDesign?.headline_font) || defaults.headlineFont;
   const bodyFont = text(rawDesign?.body_font) || defaults.bodyFont;
+  const enabledButtons = rawDesign?.enabled_buttons && typeof rawDesign.enabled_buttons === 'object' && !Array.isArray(rawDesign.enabled_buttons)
+    ? rawDesign.enabled_buttons as Record<string, unknown>
+    : null;
 
   return {
     ...defaults,
     accent: text(rawDesign?.accent_color) || defaults.accent,
+    backgroundGradient: text(rawDesign?.background_gradient) || text(enabledButtons?.backgroundGradient) || defaults.backgroundGradient,
     backgroundR2Key: text(rawDesign?.background_r2_key) || null,
     backgroundType: rawDesign?.background_type === 'video' ? 'video' : 'image',
     bodyFont,
@@ -506,7 +614,8 @@ function publicDesign(rawDesign: Record<string, unknown> | null, fallbackTitle: 
     headlineFont,
     headlineFontWeight: clampFontWeight(headlineFont, number(rawDesign?.headline_font_weight), DEFAULT_HEADLINE_WEIGHT),
     layout: layoutValue(rawDesign?.layout_template) ?? defaults.layout,
-    musicTrack: text(rawDesign?.music_track_r2_key) || defaults.musicTrack,
+    musicTrackName: text(rawDesign?.music_track_name),
+    musicTrackR2Key: text(rawDesign?.music_track_r2_key) || null,
     subtitle: text(rawDesign?.heading_subtitle),
     theme: rawDesign?.theme === 'light' ? 'light' : 'dark',
     title: text(rawDesign?.heading_title) || fallbackTitle,

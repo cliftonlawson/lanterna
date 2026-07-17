@@ -29,7 +29,7 @@ function cleanText(value = '', fallback = '') {
 
 function cleanAccentColor(value = '') {
   const color = String(value || '').trim();
-  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#FFB24D';
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#6EE7F9';
 }
 
 function textToHtml(text = '') {
@@ -47,7 +47,7 @@ export function buildDeliveryEmailContent({
   studioName,
   tagline,
 } = {}) {
-  const brand = cleanText(studioName, 'Lanterna Studio');
+  const brand = cleanText(studioName, 'LANTERNA Studio');
   const galleryTitle = cleanText(galleryName, 'Your gallery');
   const href = cleanText(deliveryLink);
   const accent = cleanAccentColor(accentColor);
@@ -130,7 +130,7 @@ export function createDeliveryEmailPayload(env, { to, subject, text, html, reply
   if (!cleanHtml && !cleanText) throw new Error('An email body is required.');
 
   return {
-    from: env.EMAIL_FROM || env.RESEND_FROM_EMAIL || 'Lanterna <deliver@lanterna.video>',
+    from: env.EMAIL_FROM || env.RESEND_FROM_EMAIL || 'LANTERNA <deliver@lanterna.video>',
     html: cleanHtml,
     reply_to: replyTo || env.EMAIL_REPLY_TO || undefined,
     subject: cleanSubject,
