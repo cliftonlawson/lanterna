@@ -14,6 +14,7 @@ import { LanternLogo } from '../components/LanternLogo';
 
 type Props = {
   onGetStarted: () => void;
+  onSignIn: () => void;
   onTryDemo: () => void;
 };
 
@@ -141,7 +142,7 @@ const storagePlans: Plan[] = [
   },
 ];
 
-export function Landing({ onGetStarted, onTryDemo }: Props) {
+export function Landing({ onGetStarted, onSignIn, onTryDemo }: Props) {
   const [pricingTab, setPricingTab] = useState<PricingTab>('sub');
   const subscription = pricingTab === 'sub';
   const plans = subscription ? subscriptionPlans : storagePlans;
@@ -166,7 +167,7 @@ export function Landing({ onGetStarted, onTryDemo }: Props) {
         </div>
         <div className="landing-nav-actions">
           <button className="landing-ghost" onClick={onTryDemo}>Explore LANTERNA</button>
-          <button className="landing-ghost" onClick={onGetStarted}>Sign in</button>
+          <button className="landing-ghost" onClick={onSignIn}>Sign in</button>
           <button className="landing-primary small" onClick={onGetStarted}>Get started</button>
         </div>
       </nav>
