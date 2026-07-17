@@ -1538,7 +1538,7 @@ function SettingsTab({
   onGalleryChange: (patch: Partial<DashboardGallery>) => void;
 }) {
   const accessOptions: DashboardGallery['access'][] = ['Public', 'Password', 'Private'];
-  const customDomain = displayDomain(workspace.customDomain ?? 'deliver.lanterna.studio');
+  const customDomain = displayDomain(workspace.customDomain ?? 'deliver.lanterna.video');
   const [pendingAccess, setPendingAccess] = useState<DashboardGallery['access'] | null>(null);
   const [password, setPassword] = useState('');
   const [accessError, setAccessError] = useState('');
@@ -1645,7 +1645,7 @@ function DeliverTab({
   onShowToast: (message: string) => void;
 }) {
   const deliveryReady = preflight.every((item) => item.ok);
-  const customDomain = workspace.customDomain ?? 'deliver.lanterna.studio';
+  const customDomain = workspace.customDomain ?? 'deliver.lanterna.video';
   const deliveryLink = publicGalleryDisplayUrl(customDomain, activeGallery.slug);
   const copyDeliveryLink = () => {
     void navigator.clipboard?.writeText(publicGalleryUrl(customDomain, activeGallery.slug));

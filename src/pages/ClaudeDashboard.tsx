@@ -953,7 +953,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       {detailOpen && activeGallery && (
         <VideoDrawer
           gallery={activeGallery}
-          publicGalleryBase={workspace.customDomain ?? 'deliver.lanterna.studio'}
+          publicGalleryBase={workspace.customDomain ?? 'deliver.lanterna.video'}
           uploadJobs={uploadJobs}
           videoId={detailVideoId}
           onDeleteVideo={deleteActiveVideo}

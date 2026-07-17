@@ -18,7 +18,7 @@ const accentOptions = [
 
 export function VendorDashboardScreen({ workspace, onWorkspaceChange }: Props) {
   const customDomain = workspace.customDomain?.trim() ?? '';
-  const deliveryDomain = displayDomain(customDomain || 'deliver.lanterna.studio');
+  const deliveryDomain = displayDomain(customDomain || 'deliver.lanterna.video');
 
   return (
     <section className="page-shell vendor-page">
@@ -83,7 +83,7 @@ export function VendorDashboardScreen({ workspace, onWorkspaceChange }: Props) {
               />
               <span><i />{customDomain ? 'Custom' : 'Included'}</span>
             </label>
-            <p className="vendor-domain-help">Leave this blank to use deliver.lanterna.studio.</p>
+            <p className="vendor-domain-help">Leave this blank to use deliver.lanterna.video.</p>
           </section>
 
           <section className="vendor-card">
