@@ -2,7 +2,7 @@ import { errorJson, json, requireEnv, safeSlug } from './http.js';
 import { publicGalleryAccessError } from './galleryAccess.js';
 import { createStreamPlayback } from './cloudflareStream.js';
 import { createR2PresignedGetUrl } from './r2Signing.js';
-import { publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
+import { accountForUser, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
 import { resolveVideoDownloadPermission } from './downloadPermissions.js';
 
 const STRIPE_API_BASE = 'https://api.stripe.com/v1';
@@ -17,6 +17,10 @@ function stripeWebhookSecret(env) {
   return env.STRIPE_WEBHOOK_SECRET;
 }
 
+function stripeConnectWebhookSecret(env) {
+  return env.STRIPE_CONNECT_WEBHOOK_SECRET;
+}
+
 function encodedForm(params) {
   const body = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -26,14 +30,17 @@ function encodedForm(params) {
   return body;
 }
 
-async function stripeRequest(env, path, params) {
+async function stripeRequest(env, path, params, options = {}) {
   requireEnv({ ...env, STRIPE_SECRET_KEY: stripeSecretKey(env) }, ['STRIPE_SECRET_KEY']);
+  const headers = {
+    authorization: `Bearer ${stripeSecretKey(env)}`,
+    'content-type': 'application/x-www-form-urlencoded',
+  };
+  if (options.stripeAccount) headers['stripe-account'] = options.stripeAccount;
+  if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
   const response = await fetch(`${STRIPE_API_BASE}${path}`, {
     body: encodedForm(params),
-    headers: {
-      authorization: `Bearer ${stripeSecretKey(env)}`,
-      'content-type': 'application/x-www-form-urlencoded',
-    },
+    headers,
     method: 'POST',
   });
   const payload = await response.json().catch(() => ({}));
@@ -43,10 +50,12 @@ async function stripeRequest(env, path, params) {
   return payload;
 }
 
-async function stripeGet(env, path) {
+async function stripeGet(env, path, options = {}) {
   requireEnv({ ...env, STRIPE_SECRET_KEY: stripeSecretKey(env) }, ['STRIPE_SECRET_KEY']);
+  const headers = { authorization: `Bearer ${stripeSecretKey(env)}` };
+  if (options.stripeAccount) headers['stripe-account'] = options.stripeAccount;
   const response = await fetch(`${STRIPE_API_BASE}${path}`, {
-    headers: { authorization: `Bearer ${stripeSecretKey(env)}` },
+    headers,
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -70,6 +79,143 @@ function payoutFor(amountCents) {
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+async function accountContext(request, env, { ownerOnly = false } = {}) {
+  const user = await currentUser(request, env);
+  const accountId = await accountForUser(env, user.id);
+  if (ownerOnly) {
+    const memberships = await supabaseRest(
+      env,
+      `account_members?select=role&account_id=eq.${encodeURIComponent(accountId)}&user_id=eq.${encodeURIComponent(user.id)}&limit=1`,
+      { headers: { accept: 'application/json' } },
+    );
+    if (memberships?.[0]?.role !== 'owner') throw new Error('Only the workspace owner can set up film payouts.');
+  }
+  return { accountId, user };
+}
+
+async function connectedAccountForLanternaAccount(env, accountId) {
+  const rows = await supabaseRest(
+    env,
+    `stripe_connected_accounts?select=*&account_id=eq.${encodeURIComponent(accountId)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  return rows?.[0] ?? null;
+}
+
+async function connectedAccountForStripeAccount(env, stripeAccountId) {
+  const rows = await supabaseRest(
+    env,
+    `stripe_connected_accounts?select=*&stripe_account_id=eq.${encodeURIComponent(stripeAccountId)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  return rows?.[0] ?? null;
+}
+
+function requirementsDue(account) {
+  return [...new Set([
+    ...(account?.requirements?.currently_due || []),
+    ...(account?.requirements?.past_due || []),
+  ].filter(Boolean))];
+}
+
+async function saveConnectedAccount(env, accountId, account) {
+  const row = {
+    account_id: accountId,
+    charges_enabled: account.charges_enabled === true,
+    details_submitted: account.details_submitted === true,
+    payouts_enabled: account.payouts_enabled === true,
+    requirements_due: requirementsDue(account),
+    stripe_account_id: account.id,
+  };
+  await supabaseRest(env, 'stripe_connected_accounts?on_conflict=account_id', {
+    body: JSON.stringify(row),
+    headers: { prefer: 'resolution=merge-duplicates,return=minimal' },
+    method: 'POST',
+  });
+  return row;
+}
+
+function connectedAccountState(account) {
+  if (!account) return 'not_connected';
+  if (account.charges_enabled === true && account.payouts_enabled === true) return 'active';
+  if ((account.requirements?.past_due || []).length > 0) return 'restricted';
+  return 'pending';
+}
+
+async function filmSalesSummary(env, accountId) {
+  const rows = await supabaseRest(
+    env,
+    `video_unlock_purchases?select=amount_cents,platform_fee_cents,studio_payout_cents&account_id=eq.${encodeURIComponent(accountId)}&status=eq.complete&limit=10000`,
+    { headers: { accept: 'application/json' } },
+  );
+  return (rows || []).reduce((summary, purchase) => ({
+    grossCents: summary.grossCents + cents(purchase.amount_cents),
+    lanternaFeeCents: summary.lanternaFeeCents + cents(purchase.platform_fee_cents),
+    salesCount: summary.salesCount + 1,
+    studioEarningsCents: summary.studioEarningsCents + cents(purchase.studio_payout_cents),
+  }), { grossCents: 0, lanternaFeeCents: 0, salesCount: 0, studioEarningsCents: 0 });
+}
+
+export async function stripeConnectStatus(request, env) {
+  const { accountId } = await accountContext(request, env);
+  const saved = await connectedAccountForLanternaAccount(env, accountId);
+  const sales = await filmSalesSummary(env, accountId);
+  if (!saved) return json({
+    chargesEnabled: false,
+    detailsSubmitted: false,
+    payoutsEnabled: false,
+    requirementsDue: [],
+    sales,
+    state: 'not_connected',
+  });
+
+  const account = await stripeGet(env, `/accounts/${encodeURIComponent(saved.stripe_account_id)}`);
+  await saveConnectedAccount(env, accountId, account);
+  return json({
+    chargesEnabled: account.charges_enabled === true,
+    detailsSubmitted: account.details_submitted === true,
+    payoutsEnabled: account.payouts_enabled === true,
+    requirementsDue: requirementsDue(account),
+    sales,
+    state: connectedAccountState(account),
+  });
+}
+
+export async function startStripeConnectOnboarding(request, env) {
+  const { accountId, user } = await accountContext(request, env, { ownerOnly: true });
+  let saved = await connectedAccountForLanternaAccount(env, accountId);
+
+  if (!saved) {
+    const branding = await supabaseRest(
+      env,
+      `vendor_branding?select=studio_name&account_id=eq.${encodeURIComponent(accountId)}&limit=1`,
+      { headers: { accept: 'application/json' } },
+    );
+    const account = await stripeRequest(env, '/accounts', {
+      country: String(env.STRIPE_CONNECT_DEFAULT_COUNTRY || 'US').toUpperCase(),
+      email: normalizeEmail(user.email),
+      'business_profile[name]': branding?.[0]?.studio_name || undefined,
+      'business_profile[product_description]': 'Wedding film delivery and digital media sales',
+      'capabilities[card_payments][requested]': true,
+      'controller[fees][payer]': 'account',
+      'controller[losses][payments]': 'stripe',
+      'controller[requirement_collection]': 'stripe',
+      'controller[stripe_dashboard][type]': 'full',
+      'metadata[lanterna_account_id]': accountId,
+    }, { idempotencyKey: `lanterna-connect-${accountId}` });
+    saved = await saveConnectedAccount(env, accountId, account);
+  }
+
+  const base = baseUrlFromRequest(request);
+  const link = await stripeRequest(env, '/account_links', {
+    account: saved.stripe_account_id,
+    refresh_url: `${base}/?connect=refresh`,
+    return_url: `${base}/?connect=return`,
+    type: 'account_onboarding',
+  });
+  return json({ onboardingUrl: link.url });
 }
 
 async function paidVideoForGallery(env, gallery, videoId) {
@@ -97,7 +243,7 @@ function checkoutReturnUrl(request, gallery, status) {
   return `${base}/g/${encodeURIComponent(gallery.slug)}${query}`;
 }
 
-async function createPendingPurchase(env, { amountCents, gallery, purchaseId, session, video }) {
+async function createPendingPurchase(env, { amountCents, gallery, purchaseId, session, stripeAccountId, video }) {
   const { platformFeeCents, studioPayoutCents } = payoutFor(amountCents);
 
   await supabaseRest(env, 'video_unlock_purchases?on_conflict=stripe_checkout_session_id', {
@@ -111,6 +257,7 @@ async function createPendingPurchase(env, { amountCents, gallery, purchaseId, se
       platform_fee_cents: platformFeeCents,
       status: 'pending',
       stripe_checkout_session_id: session.id,
+      stripe_connected_account_id: stripeAccountId || null,
       stripe_payment_intent_id: session.payment_intent || null,
       studio_payout_cents: studioPayoutCents,
       unlocked_at: null,
@@ -132,8 +279,20 @@ export async function createPaidUnlockCheckout(request, env, slug) {
   const amountCents = cents(video.paid_unlock_price_cents || 30000);
   if (amountCents < 50) throw new Error('Paid unlock price must be at least $0.50.');
 
+  const connection = await connectedAccountForLanternaAccount(env, gallery.account_id);
+  if (!connection) return errorJson('This studio has not finished setting up film sales.', 409, { code: 'film_sales_setup_required' });
+  const connectedAccount = await stripeGet(env, `/accounts/${encodeURIComponent(connection.stripe_account_id)}`);
+  await saveConnectedAccount(env, gallery.account_id, connectedAccount);
+  if (connectedAccount.charges_enabled !== true || connectedAccount.payouts_enabled !== true) {
+    return errorJson('Film sales are not available for this studio yet.', 409, { code: 'film_sales_setup_pending' });
+  }
+  if (!stripeConnectWebhookSecret(env)) {
+    return errorJson('Film sales are temporarily unavailable.', 503, { code: 'film_sales_unavailable' });
+  }
+
   const label = String(video.paid_unlock_label || video.title || 'Bonus film');
   const purchaseId = crypto.randomUUID();
+  const { platformFeeCents } = payoutFor(amountCents);
   const session = await stripeRequest(env, '/checkout/sessions', {
     mode: 'payment',
     success_url: checkoutReturnUrl(request, gallery, 'success'),
@@ -155,9 +314,20 @@ export async function createPaidUnlockCheckout(request, env, slug) {
     'payment_intent_data[metadata][purchase_id]': purchaseId,
     'payment_intent_data[metadata][video_id]': video.id,
     'payment_intent_data[metadata][kind]': 'video_unlock',
+    'payment_intent_data[application_fee_amount]': platformFeeCents,
+  }, {
+    idempotencyKey: `lanterna-unlock-${purchaseId}`,
+    stripeAccount: connection.stripe_account_id,
   });
 
-  await createPendingPurchase(env, { amountCents, gallery, purchaseId, session, video });
+  await createPendingPurchase(env, {
+    amountCents,
+    gallery,
+    purchaseId,
+    session,
+    stripeAccountId: connection.stripe_account_id,
+    video,
+  });
 
   return json({ checkoutUrl: session.url, sessionId: session.id });
 }
@@ -194,8 +364,7 @@ function timingSafeEqual(left, right) {
   return result === 0;
 }
 
-async function verifyStripeWebhook(request, env) {
-  requireEnv({ ...env, STRIPE_WEBHOOK_SECRET: stripeWebhookSecret(env) }, ['STRIPE_WEBHOOK_SECRET']);
+async function verifyStripeWebhook(request, secret) {
   const rawBody = await request.text();
   const parts = stripeSignatureParts(request.headers.get('stripe-signature'));
   const timestamp = Number(parts.t?.[0] || 0);
@@ -204,7 +373,7 @@ async function verifyStripeWebhook(request, env) {
   }
 
   const signedPayload = `${timestamp}.${rawBody}`;
-  const expected = await hmacHex(stripeWebhookSecret(env), signedPayload);
+  const expected = await hmacHex(secret, signedPayload);
   const valid = (parts.v1 || []).some((signature) => timingSafeEqual(signature, expected));
   if (!valid) throw new Error('Stripe webhook signature verification failed.');
   return JSON.parse(rawBody);
@@ -219,7 +388,7 @@ async function purchaseForSession(env, sessionId) {
   return rows?.[0] ?? null;
 }
 
-async function upsertCompletedPurchase(env, session) {
+async function upsertCompletedPurchase(env, session, stripeAccountId = null) {
   if (session?.metadata?.kind !== 'video_unlock') return;
   if (session.payment_status !== 'paid') return;
 
@@ -244,6 +413,7 @@ async function upsertCompletedPurchase(env, session) {
       platform_fee_cents: platformFeeCents,
       status: 'complete',
       stripe_checkout_session_id: session.id,
+      stripe_connected_account_id: stripeAccountId,
       stripe_payment_intent_id: session.payment_intent || null,
       studio_payout_cents: studioPayoutCents,
       unlocked_at: existing?.unlocked_at || new Date().toISOString(),
@@ -289,13 +459,44 @@ async function markPurchaseFailedFromPaymentIntent(env, paymentIntent) {
 export async function stripeWebhook(request, env) {
   let event;
   try {
-    event = await verifyStripeWebhook(request, env);
+    requireEnv({ ...env, STRIPE_WEBHOOK_SECRET: stripeWebhookSecret(env) }, ['STRIPE_WEBHOOK_SECRET']);
+    event = await verifyStripeWebhook(request, stripeWebhookSecret(env));
   } catch (error) {
     return errorJson(error instanceof Error ? error.message : 'Invalid Stripe webhook.', 400);
   }
 
   if (event.type === 'checkout.session.completed') {
     await upsertCompletedPurchase(env, event.data?.object);
+  } else if (event.type === 'checkout.session.expired' || event.type === 'checkout.session.async_payment_failed') {
+    await markPurchaseFailed(env, event.data?.object);
+  } else if (event.type === 'payment_intent.payment_failed') {
+    await markPurchaseFailedFromPaymentIntent(env, event.data?.object);
+  }
+
+  return json({ ok: true });
+}
+
+export async function stripeConnectWebhook(request, env) {
+  let event;
+  try {
+    requireEnv(
+      { ...env, STRIPE_CONNECT_WEBHOOK_SECRET: stripeConnectWebhookSecret(env) },
+      ['STRIPE_CONNECT_WEBHOOK_SECRET'],
+    );
+    event = await verifyStripeWebhook(request, stripeConnectWebhookSecret(env));
+  } catch (error) {
+    return errorJson(error instanceof Error ? error.message : 'Invalid Stripe webhook.', 400);
+  }
+
+  const stripeAccountId = String(event.account || '').trim();
+  if (!stripeAccountId) return errorJson('Connected account event is missing its account.', 400);
+  const connection = await connectedAccountForStripeAccount(env, stripeAccountId);
+  if (!connection) return json({ ignored: true, ok: true });
+
+  if (event.type === 'account.updated') {
+    await saveConnectedAccount(env, connection.account_id, event.data?.object || {});
+  } else if (event.type === 'checkout.session.completed') {
+    await upsertCompletedPurchase(env, event.data?.object, stripeAccountId);
   } else if (event.type === 'checkout.session.expired' || event.type === 'checkout.session.async_payment_failed') {
     await markPurchaseFailed(env, event.data?.object);
   } else if (event.type === 'payment_intent.payment_failed') {
@@ -380,7 +581,13 @@ export async function paidUnlockSession(request, env, slug) {
   const sessionId = String(url.searchParams.get('session_id') || '').trim();
   if (!sessionId) return errorJson('session_id is required.', 400);
 
-  const session = await stripeGet(env, `/checkout/sessions/${encodeURIComponent(sessionId)}`);
+  const purchase = await purchaseForSession(env, sessionId);
+  if (!purchase) return errorJson('Unlock purchase was not found.', 404);
+  const session = await stripeGet(
+    env,
+    `/checkout/sessions/${encodeURIComponent(sessionId)}`,
+    purchase.stripe_connected_account_id ? { stripeAccount: purchase.stripe_connected_account_id } : {},
+  );
   if (session.payment_status !== 'paid') return errorJson('Payment has not completed yet.', 402);
   if (
     session.metadata?.account_id !== gallery.account_id
@@ -390,7 +597,6 @@ export async function paidUnlockSession(request, env, slug) {
     return errorJson('Unlock session does not match this gallery.', 403);
   }
 
-  const purchase = await purchaseForSession(env, session.id);
   const unlock = await unlockPayloadForPurchase(env, gallery, purchase);
   if (!unlock) return errorJson('Payment is confirmed. Waiting for Stripe to finish the unlock.', 409, { code: 'unlock_pending_webhook' });
 

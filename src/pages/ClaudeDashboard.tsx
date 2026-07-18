@@ -57,13 +57,14 @@ import {
 } from './lanterna-dashboard/model';
 
 type Props = {
+  demo?: boolean;
   onBack?: () => void;
   onSignUp?: () => void;
 };
 
-export function ClaudeDashboard({ onBack, onSignUp }: Props) {
+export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
   const [theme, setTheme] = useState<Theme>('dark');
-  const [view, setView] = useState<View>('galleries');
+  const [view, setView] = useState<View>(() => window.location.search.includes('connect=') ? 'account' : 'galleries');
   const [studioTab, setStudioTab] = useState<StudioTab>('videos');
   const [folder, setFolder] = useState<ProjectName | null>(null);
   const [archiveTab, setArchiveTab] = useState<'active' | 'archived'>('active');
@@ -85,6 +86,11 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
   const uploadAbortControllersRef = useRef(new Map<string, AbortController>());
 
   const activeGallery = galleries.find((gallery) => gallery.id === activeId) ?? galleries[0];
+
+  useEffect(() => {
+    if (!window.location.search.includes('connect=')) return;
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
 
   useEffect(() => {
     galleriesRef.current = galleries;
@@ -934,7 +940,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       )}
 
       {view === 'vendor' && <VendorDashboardScreen workspace={workspace} onWorkspaceChange={updateWorkspace} />}
-      {view === 'account' && <AccountScreen workspace={workspace} onBack={() => {
+      {view === 'account' && <AccountScreen demo={demo} onSignUp={onSignUp} workspace={workspace} onBack={() => {
         setFolder(null);
         setView('galleries');
       }} />}
@@ -952,6 +958,7 @@ export function ClaudeDashboard({ onBack, onSignUp }: Props) {
       )}
       {detailOpen && activeGallery && (
         <VideoDrawer
+          demo={demo}
           gallery={activeGallery}
           publicGalleryBase={workspace.customDomain ?? 'deliver.lanterna.video'}
           uploadJobs={uploadJobs}

@@ -6,5 +6,5 @@ type Props = {
 };
 
 export function DemoDashboard({ onSignUp, onBack }: Props) {
-  return <ClaudeDashboard onSignUp={onSignUp} onBack={onBack} />;
+  return <ClaudeDashboard demo onSignUp={onSignUp} onBack={onBack} />;
 }

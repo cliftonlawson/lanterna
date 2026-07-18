@@ -6,6 +6,7 @@ import {
   completeVideoMasterUpload,
   createPosterUploadSlot,
   createUploadSlot,
+  getConnectStatus,
   getMediaUrls,
   getStreamPlayback,
   putFileToR2,
@@ -22,6 +23,7 @@ import { Panel, Toggle } from './shared';
 const PLATFORM_FEE_RATE = 0.1;
 
 type Props = {
+  demo?: boolean;
   gallery: DashboardGallery;
   publicGalleryBase: string;
   uploadJobs: UploadJob[];
@@ -33,7 +35,7 @@ type Props = {
   onUploadStateChange: () => Promise<void>;
 };
 
-export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, onDeleteVideo, onGalleryChange, onClose, onShowToast, onUploadStateChange }: Props) {
+export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJobs, videoId, onDeleteVideo, onGalleryChange, onClose, onShowToast, onUploadStateChange }: Props) {
   const video = gallery.videoItems.find((item) => item.id === videoId) ?? gallery.videoItems[0];
   const videoIndex = Math.max(0, gallery.videoItems.findIndex((item) => item.id === video?.id));
   const paidEnabled = Boolean(video?.paidUnlockEnabled);
@@ -48,6 +50,7 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
   const [captureSecond, setCaptureSecond] = useState(0);
   const [posterUploading, setPosterUploading] = useState(false);
   const [videoReplacing, setVideoReplacing] = useState(false);
+  const [filmSalesReady, setFilmSalesReady] = useState<boolean | null>(null);
   const [replaceStage, setReplaceStage] = useState<'idle' | 'uploading_master' | 'master_secured' | 'preparing_playback'>('idle');
   const [replaceProgress, setReplaceProgress] = useState(0);
   const posterInputRef = useRef<HTMLInputElement | null>(null);
@@ -81,6 +84,22 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
       : video?.processingStatus === 'uploading'
         ? 'Uploading replacement'
         : '';
+
+  useEffect(() => {
+    if (demo) {
+      setFilmSalesReady(true);
+      return undefined;
+    }
+    let cancelled = false;
+    void getConnectStatus().then((status) => {
+      if (!cancelled) setFilmSalesReady(status.state === 'active');
+    }).catch(() => {
+      if (!cancelled) setFilmSalesReady(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [demo]);
 
   useEffect(() => {
     const keys = [playbackKey, posterKey].filter(Boolean) as string[];
@@ -152,6 +171,10 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
 
   const setPaidMode = (enabled: boolean) => {
     if (!video) return;
+    if (enabled && filmSalesReady !== true) {
+      onShowToast('Set up payouts in Account & billing before offering paid films');
+      return;
+    }
     updateVideo({
       paidUnlockEnabled: enabled,
       paidUnlockLabel: video.paidUnlockLabel || video.title,
@@ -365,8 +388,9 @@ export function VideoDrawer({ gallery, publicGalleryBase, uploadJobs, videoId, o
           <p>Include this film in the gallery, or lock it as a paid bonus edit the couple can unlock.</p>
           <div className="paid-segmented" role="group" aria-label="Film access pricing">
             <button className={!paidEnabled ? 'on' : ''} onClick={() => setPaidMode(false)}>Included</button>
-            <button className={paidEnabled ? 'on' : ''} onClick={() => setPaidMode(true)}>Paid unlock</button>
+            <button className={paidEnabled ? 'on' : ''} disabled={filmSalesReady !== true && !paidEnabled} onClick={() => setPaidMode(true)}>Paid unlock</button>
           </div>
+          {filmSalesReady === false && !paidEnabled && <p className="paid-setup-note">Set up payouts in Account &amp; billing to offer paid films.</p>}
           {paidEnabled && (
             <>
               <div className="paid-form-grid">

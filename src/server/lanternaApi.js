@@ -17,7 +17,15 @@ import { publicGalleryAccessError } from './galleryAccess.js';
 import { accountForUser, assertGalleryMembership, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
 import { empty, errorJson, json, readJson, routePath, safeSlug } from './http.js';
 import { buildDeliveryEmailContent, sendTransactionalEmail } from './transactionalEmail.js';
-import { createPaidUnlockCheckout, paidUnlockSession, recoverPaidUnlock, stripeWebhook } from './stripeCheckout.js';
+import {
+  createPaidUnlockCheckout,
+  paidUnlockSession,
+  recoverPaidUnlock,
+  startStripeConnectOnboarding,
+  stripeConnectStatus,
+  stripeConnectWebhook,
+  stripeWebhook,
+} from './stripeCheckout.js';
 import { resolveGalleryDownloadPermission, resolveVideoDownloadPermission } from './downloadPermissions.js';
 import { hashGalleryPassword, supportedGalleryPasswordHash, verifyGalleryPassword } from './galleryPassword.js';
 import { startStreamCopyFromMaster, StreamCopyStartError } from './videoIngestion.js';
@@ -71,16 +79,22 @@ async function galleryPreflight(env, gallery) {
     return { code: 'password_required', message: 'Set a gallery password before publishing.' };
   }
 
-  const videos = await supabaseRest(
-    env,
-    `videos?select=id,r2_key,web_copy_r2_key,stream_uid,stream_ready,processing_status&gallery_id=eq.${encodeURIComponent(gallery.id)}&visible_in_gallery=eq.true&deleted_at=is.null&limit=25`,
-    { headers: { accept: 'application/json' } },
-  );
-  const readyPlayableVideo = (videos || []).find((video) => video.processing_status === 'ready' && (
-    video.r2_key
-    || video.web_copy_r2_key
-    || (video.stream_uid && video.stream_ready !== false)
-  ));
+  const [videos, connections] = await Promise.all([
+    supabaseRest(
+      env,
+      `videos?select=id,r2_key,web_copy_r2_key,stream_uid,stream_ready,processing_status,paid_unlock_enabled&gallery_id=eq.${encodeURIComponent(gallery.id)}&visible_in_gallery=eq.true&deleted_at=is.null&limit=25`,
+      { headers: { accept: 'application/json' } },
+    ),
+    supabaseRest(
+      env,
+      `stripe_connected_accounts?select=charges_enabled,payouts_enabled&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`,
+      { headers: { accept: 'application/json' } },
+    ),
+  ]);
+  const filmSalesReady = connections?.[0]?.charges_enabled === true && connections?.[0]?.payouts_enabled === true;
+  const readyPlayableVideo = (videos || []).find((video) => video.processing_status === 'ready'
+    && (video.paid_unlock_enabled !== true || filmSalesReady)
+    && (video.r2_key || video.web_copy_r2_key || (video.stream_uid && video.stream_ready !== false)));
   if (!readyPlayableVideo) return { code: 'ready_video_required', message: 'Add at least one ready, playable film before publishing.' };
 
   if (!gallery.cover_video_id && !gallery.cover_photo_id) {
@@ -1726,11 +1740,16 @@ async function passwordMatches(gallery, password) {
 }
 
 async function publicGalleryPayload(env, gallery) {
-  const videos = await supabaseRest(env, `videos?select=id,title,duration_seconds,r2_key,stream_uid,stream_ready,web_copy_r2_key,poster_r2_key,processing_status,download_enabled,visible_in_gallery,paid_unlock_enabled,paid_unlock_price_cents,paid_unlock_currency,paid_unlock_label,paid_unlock_tagline&gallery_id=eq.${encodeURIComponent(gallery.id)}&visible_in_gallery=eq.true&deleted_at=is.null&order=sort_order.asc`);
+  const [videos, connections] = await Promise.all([
+    supabaseRest(env, `videos?select=id,title,duration_seconds,r2_key,stream_uid,stream_ready,web_copy_r2_key,poster_r2_key,processing_status,download_enabled,visible_in_gallery,paid_unlock_enabled,paid_unlock_price_cents,paid_unlock_currency,paid_unlock_label,paid_unlock_tagline&gallery_id=eq.${encodeURIComponent(gallery.id)}&visible_in_gallery=eq.true&deleted_at=is.null&order=sort_order.asc`),
+    supabaseRest(env, `stripe_connected_accounts?select=charges_enabled,payouts_enabled&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`),
+  ]);
+  const filmSalesReady = connections?.[0]?.charges_enabled === true && connections?.[0]?.payouts_enabled === true;
   const publishableVideos = videos.filter((video) => {
     const ready = video.processing_status === 'ready' || (video.processing_status == null && video.stream_ready !== false);
     const playable = Boolean(video.r2_key || video.web_copy_r2_key || (video.stream_uid && video.stream_ready !== false));
-    return ready && playable;
+    const paidFilmAvailable = video.paid_unlock_enabled !== true || filmSalesReady;
+    return ready && playable && paidFilmAvailable;
   });
   const photos = await supabaseRest(env, `photos?select=id,album_id,r2_key,width,height&gallery_id=eq.${encodeURIComponent(gallery.id)}&deleted_at=is.null&order=sort_order.asc`);
   const publishablePhotos = photos.filter((photo) => Boolean(photo.r2_key));
@@ -1959,7 +1978,10 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'gallery/archive') return await setGalleryArchived(request, env);
     if (request.method === 'POST' && path === 'gallery/delete') return await deleteGallery(request, env);
     if (request.method === 'POST' && path === 'delivery/record') return await deliveryRecord(request, env);
+    if (request.method === 'GET' && path === 'connect/status') return await stripeConnectStatus(request, env);
+    if (request.method === 'POST' && path === 'connect/onboarding') return await startStripeConnectOnboarding(request, env);
     if (request.method === 'POST' && path === 'stripe/webhook') return await stripeWebhook(request, env);
+    if (request.method === 'POST' && path === 'stripe/connect/webhook') return await stripeConnectWebhook(request, env);
     if (request.method === 'GET' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/session')) return await paidUnlockSession(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/session$/, ''));
     if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/recover')) return await recoverPaidUnlock(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/recover$/, ''));
     if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/checkout')) return await createPaidUnlockCheckout(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/checkout$/, ''));

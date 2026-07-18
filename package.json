@@ -17,6 +17,7 @@
     "test:media-task-ledger": "node scripts/test-honest-media-tasks.mjs",
     "test:music": "node scripts/test-music-upload.mjs",
     "test:r2-signing": "node scripts/test-r2-signing.mjs",
+    "test:stripe-connect": "node scripts/test-stripe-connect.mjs",
     "test:user-copy": "node scripts/test-user-facing-copy.mjs",
     "test:upload-accounting": "node scripts/test-upload-accounting.mjs",
     "test:video-ingestion": "node scripts/test-dual-video-ingestion.mjs",

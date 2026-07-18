@@ -4,6 +4,8 @@ Paid unlocks let a studio mark a visible gallery film as a paid bonus. The publi
 
 ## Studio Setup
 
+The workspace owner first connects a Stripe payout account from Account & billing. Lanterna uses Stripe-hosted onboarding and does not collect business, identity, or bank details itself. Paid unlock controls remain disabled until Stripe reports both charges and payouts enabled. Public payloads also omit paid films while the payout account is unavailable, preventing a gallery from advertising a film it cannot sell.
+
 The studio enables paid unlocks per video in the video drawer. A paid video keeps its normal title, duration, poster, and gallery position, plus these fields:
 
 - `paid_unlock_enabled`: locks the film behind checkout.
@@ -14,7 +16,7 @@ The studio enables paid unlocks per video in the video drawer. A paid video keep
 
 Product decision: v1 does not offer locked-film preview trailers. Before purchase, the locked tile uses the video's poster; no playback URL for the full film is exposed. A future trailer feature must use an explicit separate preview asset rather than a boolean against the locked master.
 
-The studio payout model in code is 90% studio payout and 10% Lanterna platform fee. Those values are calculated server-side from `amount_total`.
+The studio payout model in code is a 90% studio share before Stripe processing fees and a 10% Lanterna application fee. Checkout uses a direct charge on the connected studio account, making the studio the merchant of record and responsible for Stripe's processing fee. The 90/10 values are calculated server-side from `amount_total`; `studio_payout_cents` is the studio share before Stripe fees, not a bank-payout reconciliation figure.
 
 Product decision: a paid unlock grants viewing. Download continues to follow the gallery-level and video-level download flags, so the studio decides whether a buyer can download.
 
@@ -46,7 +48,7 @@ The public page detects `unlock_session` in the URL and calls:
 
 The server fetches the Checkout Session from Stripe, requires `payment_status=paid`, verifies the Stripe metadata matches the current gallery, then looks for a completed `video_unlock_purchases` row. Return-URL verification does not grant the unlock by itself; it is a fast convenience path that polls briefly and returns media after the Stripe webhook has completed the purchase.
 
-The Stripe webhook route handles `checkout.session.completed`, verifies the webhook signature, and upserts the completed purchase row. This is the authoritative path that grants unlock access, including when a buyer pays and closes the tab before returning to Lanterna. Webhook delivery is idempotent through the unique `stripe_checkout_session_id` index. Duplicate completed webhooks keep the original `unlocked_at` timestamp.
+The Connect webhook route handles `checkout.session.completed`, verifies its dedicated webhook signature, validates the originating connected account against the Lanterna workspace, and upserts the completed purchase row. This is the authoritative path that grants unlock access, including when a buyer pays and closes the tab before returning to Lanterna. Webhook delivery is idempotent through the unique `stripe_checkout_session_id` index. Duplicate completed webhooks keep the original `unlocked_at` timestamp.
 
 ## Purchase States
 

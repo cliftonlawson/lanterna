@@ -54,21 +54,13 @@ SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
-Apply the migrations in order:
+Apply every migration in `supabase/migrations` in timestamp order:
 
 ```bash
 supabase db push
 ```
 
-or paste/run the SQL files in order from `supabase/migrations`:
-
-```text
-20260630011015_lanterna_initial_schema.sql
-20260701105500_lanterna_state_machine_triggers.sql
-20260701120500_lanterna_usage_allowance_defaults.sql
-20260701182000_gallery_design_layout_default_lumen.sql
-20260701183000_ensure_current_user_account.sql
-```
+or paste/run the SQL files in that directory in timestamp order.
 
 The initial schema creates the account-scoped data model, RLS policies, and a first-login bootstrap trigger. The state-machine migration adds delivery clocks, recipient status syncing, and upload usage accounting.
 
@@ -80,6 +72,9 @@ The Cloudflare Pages Function at `functions/api/[[path]].js` exposes the backend
 POST /api/upload/slot
 POST /api/upload/complete
 POST /api/delivery/notify
+GET  /api/connect/status
+POST /api/connect/onboarding
+POST /api/stripe/connect/webhook
 GET  /api/public/gallery/:slug
 ```
 
@@ -98,9 +93,14 @@ RESEND_READ_API_KEY=your-full-access-resend-api-key
 EMAIL_FROM="Lanterna <deliver@lanterna.video>"
 EMAIL_REPLY_TO=team@hellobower.com
 PUBLIC_DELIVERY_BASE_URL=https://deliver.your-domain.com
+STRIPE_SECRET_KEY=your-stripe-platform-secret-key
+STRIPE_WEBHOOK_SECRET=your-platform-webhook-signing-secret
+STRIPE_CONNECT_WEBHOOK_SECRET=your-connect-webhook-signing-secret
 ```
 
 `EMAIL_PROVIDER_API_KEY` should stay send-only in Resend. `RESEND_READ_API_KEY` is a separate server-only full-access key used only for provider-side delivery-status lookups. `EMAIL_PROVIDER=mock` keeps delivery email calls as previews while the rest of the delivery proof rows write to Supabase.
+
+Stripe Connect uses direct charges so the studio is the merchant of record. Create a Connect webhook for `https://app.lanterna.video/api/stripe/connect/webhook`, enable connected-account events, and subscribe to `account.updated`, `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_failed`, and `payment_intent.payment_failed`. Store that endpoint's signing secret separately as `STRIPE_CONNECT_WEBHOOK_SECRET`.
 
 ## Next External Pieces
 

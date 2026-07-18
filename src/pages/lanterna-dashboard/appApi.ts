@@ -27,6 +27,42 @@ async function postApi<T>(path: string, body: unknown) {
   return await response.json() as T;
 }
 
+async function getApi<T>(path: string) {
+  const token = await sessionToken();
+  if (!token) throw new Error('Sign in to continue.');
+
+  const response = await fetch(path, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.error ?? `LANTERNA API failed (${response.status})`);
+  }
+  return await response.json() as T;
+}
+
+export type ConnectStatus = {
+  chargesEnabled: boolean;
+  detailsSubmitted: boolean;
+  payoutsEnabled: boolean;
+  requirementsDue: string[];
+  sales: {
+    grossCents: number;
+    lanternaFeeCents: number;
+    salesCount: number;
+    studioEarningsCents: number;
+  };
+  state: 'not_connected' | 'pending' | 'restricted' | 'active';
+};
+
+export async function getConnectStatus() {
+  return getApi<ConnectStatus>('/api/connect/status');
+}
+
+export async function startConnectOnboarding() {
+  return postApi<{ onboardingUrl: string }>('/api/connect/onboarding', {});
+}
+
 export async function createGalleryRemote(input: {
   accessType: 'public' | 'password' | 'private';
   clientName: string;
