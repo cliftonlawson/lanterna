@@ -14,7 +14,7 @@ type Props = {
   onSignUp?: () => void;
 };
 
-const COMING_SOON_CONNECT: ConnectStatus = {
+const UNAVAILABLE_CONNECT: ConnectStatus = {
   available: false,
   chargesEnabled: false,
   detailsSubmitted: false,
@@ -46,14 +46,14 @@ export function AccountScreen({ demo = false, refreshAfterCheckout = false, work
 
   useEffect(() => {
     if (demo || !workspace.accountId) {
-      setConnect(COMING_SOON_CONNECT);
+      setConnect(UNAVAILABLE_CONNECT);
       return undefined;
     }
     let mounted = true;
     void getConnectStatus().then((status) => {
       if (mounted) setConnect(status);
     }).catch(() => {
-      if (mounted) setConnect(COMING_SOON_CONNECT);
+      if (mounted) setConnect(UNAVAILABLE_CONNECT);
     });
     return () => {
       mounted = false;

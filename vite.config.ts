@@ -5,6 +5,7 @@ import { handleLanternaApiRequest } from './src/server/lanternaApi.js';
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = { ...process.env, ...loadEnv(mode, process.cwd(), '') };
+  if (!env.FILM_SALES_ENABLED) env.FILM_SALES_ENABLED = 'true';
 
   return {
     plugins: [react(), lanternaApiDevPlugin(env)],

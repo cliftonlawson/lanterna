@@ -17,6 +17,7 @@ const stripe = read('../src/server/stripeCheckout.js');
 const legal = read('../src/pages/LegalPage.tsx');
 const account = read('../src/pages/lanterna-dashboard/AccountScreen.tsx');
 const videoDrawer = read('../src/pages/lanterna-dashboard/VideoDrawer.tsx');
+const vite = read('../vite.config.ts');
 const wrangler = read('../wrangler.toml');
 
 assert.match(context, /resetPasswordForEmail/);
@@ -59,6 +60,7 @@ assert.match(stripe, /markPurchaseRefunded/);
 assert.match(stripe, /FILM_SALES_ENABLED/);
 assert.match(stripe, /film_sales_unavailable/);
 assert.match(wrangler, /FILM_SALES_ENABLED = "true"/);
+assert.match(vite, /FILM_SALES_ENABLED.*true/);
 assert.doesNotMatch(landing, /coming soon/i);
 assert.doesNotMatch(legal, /coming soon|not currently available|when the feature launches/i);
 assert.doesNotMatch(account, /coming soon/i);
