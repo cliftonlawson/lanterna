@@ -138,6 +138,7 @@ try {
   assert.equal(accountParams.get('controller[requirement_collection]'), 'stripe');
   assert.equal(accountParams.get('controller[stripe_dashboard][type]'), 'full');
   assert.equal(accountParams.get('capabilities[card_payments][requested]'), 'true');
+  assert.equal(accountParams.get('capabilities[transfers][requested]'), 'true');
 
   const checkout = await createPaidUnlockCheckout(
     new Request('https://deliver.lanterna.video/api/public/gallery/alexa-and-nick/paid-unlock/checkout', {

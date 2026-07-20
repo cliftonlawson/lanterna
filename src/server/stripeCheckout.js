@@ -235,6 +235,7 @@ export async function startStripeConnectOnboarding(request, env) {
         'business_profile[name]': branding?.[0]?.studio_name || undefined,
         'business_profile[product_description]': 'Wedding film delivery and digital media sales',
         'capabilities[card_payments][requested]': true,
+        'capabilities[transfers][requested]': true,
         'controller[fees][payer]': 'account',
         'controller[losses][payments]': 'stripe',
         'controller[requirement_collection]': 'stripe',
