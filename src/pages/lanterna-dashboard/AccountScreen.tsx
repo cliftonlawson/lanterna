@@ -98,9 +98,9 @@ export function AccountScreen({ demo = false, refreshAfterCheckout = false, work
     }
   };
 
-  const openBillingPortal = async () => {
+  const openBillingPortal = async (action = 'portal') => {
     try {
-      setBillingAction('portal');
+      setBillingAction(action);
       setBillingError('');
       const result = await startPlatformBillingPortal();
       window.location.assign(result.portalUrl);
@@ -195,27 +195,62 @@ export function AccountScreen({ demo = false, refreshAfterCheckout = false, work
                   <button disabled={!billing.canBuyWhiteLabel || Boolean(billingAction)} onClick={() => void openCheckout(WHITE_LABEL_PRODUCT.sku)}><Sparkles size={15} /> {billing.whiteLabel ? 'White label active' : 'White label · $149/year'}</button>
                 </div>
               </div>
-            ) : billing ? (
-              <>
-                <p>{billing.usage.allowanceTotalGb > 0
-                  ? `Your ${formatAllowance(billing.usage.allowanceTotalGb)} welcome allowance is active. Choose a subscription for annual upload room and included white label, or buy a one-time block.`
-                  : 'Choose a subscription for automatic annual upload room and included white label, or buy a one-time block.'}</p>
-                <div className="account-plan-options">
-                  {SUBSCRIPTION_TIERS.map((tier) => (
-                    <article key={tier.plan}>
-                      <strong>{tier.name}<small>{formatAllowance(tier.allowanceGb)} annually</small></strong>
-                      <button disabled={Boolean(billingAction)} onClick={() => void openCheckout(tier.monthly.sku)}>{formatCatalogMoney(tier.monthly.amountCents)}/month</button>
-                      <button disabled={Boolean(billingAction)} onClick={() => void openCheckout(tier.annual.sku)}>{formatCatalogMoney(tier.annual.amountCents)}/year</button>
-                    </article>
-                  ))}
+            ) : billing ? <p>{billing.usage.allowanceTotalGb > 0
+              ? `Your ${formatAllowance(billing.usage.allowanceTotalGb)} welcome allowance is active. Choose a subscription for annual upload room and included white label, or buy a one-time block.`
+              : 'Choose a subscription for automatic annual upload room and included white label, or buy a one-time block.'}</p>
+              : demo ? <p>Create an account to choose a plan or upload block.</p> : null}
+
+            {billing && (
+              <div className="account-plan-comparison">
+                <div className="account-plan-comparison-heading">
+                  <strong>{billing.subscription ? 'Compare plans' : 'Subscription plans'}</strong>
+                  <span>{billing.subscription ? 'Changes are managed securely in Stripe.' : 'White label is included with every plan.'}</span>
                 </div>
+                <div className="account-plan-options">
+                  {SUBSCRIPTION_TIERS.map((tier) => {
+                    const currentTier = billing.subscription?.plan === tier.plan;
+                    return (
+                      <article className={currentTier ? 'is-current' : ''} key={tier.plan}>
+                        <div className="account-plan-name">
+                          <strong>{tier.name}<small>{formatAllowance(tier.allowanceGb)} annually</small></strong>
+                          {currentTier && <span>Current plan</span>}
+                        </div>
+                        {[tier.monthly, tier.annual].map((price) => {
+                          const cadence = price === tier.monthly ? 'month' : 'year';
+                          const isCurrent = currentTier && billing.subscription?.billing_interval === cadence;
+                          const action = billing.subscription ? `portal-${price.sku}` : price.sku;
+                          return (
+                            <button
+                              aria-current={isCurrent ? 'true' : undefined}
+                              className={isCurrent ? 'is-current' : ''}
+                              disabled={isCurrent || Boolean(billingAction) || (!billing.subscription && billing.blockActive)}
+                              key={price.sku}
+                              onClick={() => void (billing.subscription ? openBillingPortal(action) : openCheckout(price.sku))}
+                            >
+                              {billingAction === action && <Loader2 size={14} />}
+                              {isCurrent ? 'Current · ' : billing.subscription ? 'Change · ' : ''}{formatCatalogMoney(price.amountCents)}/{cadence}
+                            </button>
+                          );
+                        })}
+                      </article>
+                    );
+                  })}
+                </div>
+                {billing.blockActive && <p className="account-plan-note">Your upload block stays active through {formatDate(billing.periodEnd)}. A subscription can begin after it expires.</p>}
+              </div>
+            )}
+
+            {billing && !billing.subscription && !billing.blockActive && (
+              <div className="account-block-section">
+                <strong>Prefer no subscription?</strong>
+                <span>Buy a one-time annual upload block. White label is available separately.</span>
                 <div className="account-block-options">
                   {BLOCK_PRODUCTS.map((block) => (
                     <button disabled={Boolean(billingAction)} key={block.sku} onClick={() => void openCheckout(block.sku)}>{block.name} · {formatCatalogMoney(block.amountCents)}</button>
                   ))}
                 </div>
-              </>
-            ) : demo ? <p>Create an account to choose a plan or upload block.</p> : null}
+              </div>
+            )}
           </section>
 
           <section className="account-card">

@@ -1771,15 +1771,27 @@ button.upload-queue-main { cursor: pointer; }
 .account-current-plan > div:first-child strong { color: var(--text); font-size: 18px; }
 .account-current-plan > div:first-child span, .account-current-plan > p { color: var(--muted); font-size: 12.5px; }
 .account-current-plan > p { margin: 12px 0 16px; }
-.account-current-plan > button, .account-addon-actions button, .account-plan-options button, .account-block-options button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 9px 13px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-2); color: var(--text2); cursor: pointer; font-size: 12px; font-weight: 800; }
+.account-current-plan > button, .account-addon-actions button, .account-plan-options button, .account-block-options button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 9px 13px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-2); color: var(--text2); cursor: pointer; font-size: 12px; font-weight: 800; }
 .account-current-plan button:hover, .account-plan-options button:hover, .account-block-options button:hover { border-color: rgba(110,231,249,.4); color: var(--text); }
 .account-current-plan button:disabled, .account-plan-options button:disabled, .account-block-options button:disabled { cursor: wait; opacity: .55; }
 .account-addon-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 16px; }
+.account-plan-comparison { padding-top: 20px; margin-top: 20px; border-top: 1px solid var(--border); }
+.account-plan-comparison-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.account-plan-comparison-heading > strong, .account-block-section > strong { color: var(--text); font-size: 13.5px; }
+.account-plan-comparison-heading > span, .account-block-section > span { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.account-plan-comparison-heading > span { max-width: 34ch; text-align: right; }
 .account-plan-options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-top: 18px; }
 .account-plan-options article { display: grid; gap: 8px; padding: 13px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-2); }
+.account-plan-options article.is-current { border-color: rgba(110,231,249,.34); background: linear-gradient(145deg,rgba(110,231,249,.09),rgba(129,140,248,.06)); box-shadow: inset 0 0 0 1px rgba(110,231,249,.04); }
+.account-plan-name { min-height: 39px; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.account-plan-name > span { flex: 0 0 auto; padding: 4px 7px; border-radius: 99px; background: rgba(110,231,249,.14); color: var(--accent-ink); font-size: 9px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
 .account-plan-options strong, .account-plan-options small { display: block; }
 .account-plan-options strong { color: var(--text); font-size: 13px; }
 .account-plan-options small { margin-top: 3px; color: var(--muted); font-size: 10.5px; font-weight: 600; }
+.account-plan-options button.is-current { border-color: rgba(110,231,249,.28); background: rgba(110,231,249,.11); color: var(--accent-ink); cursor: default; opacity: 1; }
+.account-plan-options button svg { animation: accountSpin .9s linear infinite; }
+.account-plan-note { margin: 12px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.account-block-section { display: flex; flex-direction: column; gap: 4px; padding-top: 20px; margin-top: 20px; border-top: 1px solid var(--border); }
 .account-block-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .account-sales-card .account-card-heading { margin-bottom: 16px; }
 .account-sales-card .account-sales-state.is-active { background: rgba(104,211,145,.13); color: #7add9d; }
@@ -2253,6 +2265,8 @@ button.upload-queue-main { cursor: pointer; }
   .new-gallery-footer button { flex: 1; min-width: 0; padding-inline: 14px; }
   .vendor-card, .account-card { padding: 20px; }
   .account-plan-options { grid-template-columns: 1fr; }
+  .account-plan-comparison-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .account-plan-comparison-heading > span { max-width: none; text-align: left; }
   .vendor-profile-fields { grid-template-columns: 1fr; }
   .vendor-logo-tile { width: 72px; height: 72px; }
   .vendor-accent-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
