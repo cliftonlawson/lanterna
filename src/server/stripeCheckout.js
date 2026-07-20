@@ -241,7 +241,7 @@ export async function startStripeConnectOnboarding(request, env) {
         'controller[requirement_collection]': 'stripe',
         'controller[stripe_dashboard][type]': 'full',
         'metadata[lanterna_account_id]': accountId,
-      }, { idempotencyKey: `lanterna-connect-${accountId}` });
+      }, { idempotencyKey: `lanterna-connect-v2-${accountId}` });
       saved = await saveConnectedAccount(env, accountId, account);
     } catch (error) {
       console.error('Stripe Connect onboarding failed while creating the connected account.', error);

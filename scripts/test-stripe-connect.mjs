@@ -139,6 +139,7 @@ try {
   assert.equal(accountParams.get('controller[stripe_dashboard][type]'), 'full');
   assert.equal(accountParams.get('capabilities[card_payments][requested]'), 'true');
   assert.equal(accountParams.get('capabilities[transfers][requested]'), 'true');
+  assert.equal(accountCreate.headers.get('idempotency-key'), `lanterna-connect-v2-${accountId}`);
 
   const checkout = await createPaidUnlockCheckout(
     new Request('https://deliver.lanterna.video/api/public/gallery/alexa-and-nick/paid-unlock/checkout', {
