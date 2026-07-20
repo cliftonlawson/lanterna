@@ -5,4 +5,5 @@ pages_build_output_dir = "dist"
 [vars]
 APP_URL = "https://app.lanterna.video"
 PUBLIC_DELIVERY_BASE_URL = "https://deliver.lanterna.video"
+FILM_SALES_ENABLED = "false"
 EMAIL_PROVIDER = "resend"

@@ -20,6 +20,7 @@ import { buildDeliveryEmailContent, sendTransactionalEmail } from './transaction
 import {
   createPaidUnlockCheckout,
   confirmPaidUnlockRecovery,
+  filmSalesEnabled,
   paidUnlockSession,
   recoverPaidUnlock,
   startStripeConnectOnboarding,
@@ -95,7 +96,9 @@ async function galleryPreflight(env, gallery) {
       { headers: { accept: 'application/json' } },
     ),
   ]);
-  const filmSalesReady = connections?.[0]?.charges_enabled === true && connections?.[0]?.payouts_enabled === true;
+  const filmSalesReady = filmSalesEnabled(env)
+    && connections?.[0]?.charges_enabled === true
+    && connections?.[0]?.payouts_enabled === true;
   const readyPlayableVideo = (videos || []).find((video) => video.processing_status === 'ready'
     && (video.paid_unlock_enabled !== true || filmSalesReady)
     && (video.r2_key || video.web_copy_r2_key || (video.stream_uid && video.stream_ready !== false)));
@@ -1821,7 +1824,9 @@ async function publicGalleryPayload(env, gallery) {
     supabaseRest(env, `videos?select=id,title,duration_seconds,r2_key,stream_uid,stream_ready,web_copy_r2_key,poster_r2_key,processing_status,download_enabled,visible_in_gallery,paid_unlock_enabled,paid_unlock_price_cents,paid_unlock_currency,paid_unlock_label,paid_unlock_tagline&gallery_id=eq.${encodeURIComponent(gallery.id)}&visible_in_gallery=eq.true&deleted_at=is.null&order=sort_order.asc`),
     supabaseRest(env, `stripe_connected_accounts?select=charges_enabled,payouts_enabled&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`),
   ]);
-  const filmSalesReady = connections?.[0]?.charges_enabled === true && connections?.[0]?.payouts_enabled === true;
+  const filmSalesReady = filmSalesEnabled(env)
+    && connections?.[0]?.charges_enabled === true
+    && connections?.[0]?.payouts_enabled === true;
   const publishableVideos = videos.filter((video) => {
     const ready = video.processing_status === 'ready' || (video.processing_status == null && video.stream_ready !== false);
     const playable = Boolean(video.r2_key || video.web_copy_r2_key || (video.stream_uid && video.stream_ready !== false));

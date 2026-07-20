@@ -51,6 +51,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
   const [posterUploading, setPosterUploading] = useState(false);
   const [videoReplacing, setVideoReplacing] = useState(false);
   const [filmSalesReady, setFilmSalesReady] = useState<boolean | null>(null);
+  const [filmSalesAvailable, setFilmSalesAvailable] = useState<boolean | null>(null);
   const [replaceStage, setReplaceStage] = useState<'idle' | 'uploading_master' | 'master_secured' | 'preparing_playback'>('idle');
   const [replaceProgress, setReplaceProgress] = useState(0);
   const posterInputRef = useRef<HTMLInputElement | null>(null);
@@ -87,14 +88,21 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
 
   useEffect(() => {
     if (demo) {
-      setFilmSalesReady(true);
+      setFilmSalesAvailable(false);
+      setFilmSalesReady(false);
       return undefined;
     }
     let cancelled = false;
     void getConnectStatus().then((status) => {
-      if (!cancelled) setFilmSalesReady(status.state === 'active');
+      if (!cancelled) {
+        setFilmSalesAvailable(status.available === true);
+        setFilmSalesReady(status.available === true && status.state === 'active');
+      }
     }).catch(() => {
-      if (!cancelled) setFilmSalesReady(false);
+      if (!cancelled) {
+        setFilmSalesAvailable(false);
+        setFilmSalesReady(false);
+      }
     });
     return () => {
       cancelled = true;
@@ -171,6 +179,10 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
 
   const setPaidMode = (enabled: boolean) => {
     if (!video) return;
+    if (enabled && filmSalesAvailable === false) {
+      onShowToast('Paid film sales are coming soon');
+      return;
+    }
     if (enabled && filmSalesReady !== true) {
       onShowToast('Set up payouts in Account & billing before offering paid films');
       return;
@@ -386,11 +398,17 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
             <strong>Access & pricing</strong>
           </header>
           <p>Include this film in the gallery, or lock it as a paid bonus edit the couple can unlock.</p>
+          {filmSalesAvailable === false && (
+            <div className="paid-coming-soon-banner">
+              <span>Coming soon</span>
+              <p>Paid unlocks are in final review. Keep this film included to deliver it now.</p>
+            </div>
+          )}
           <div className="paid-segmented" role="group" aria-label="Film access pricing">
             <button className={!paidEnabled ? 'on' : ''} onClick={() => setPaidMode(false)}>Included</button>
-            <button className={paidEnabled ? 'on' : ''} disabled={filmSalesReady !== true && !paidEnabled} onClick={() => setPaidMode(true)}>Paid unlock</button>
+            <button className={paidEnabled ? 'on' : ''} disabled={filmSalesAvailable === false || (filmSalesReady !== true && !paidEnabled)} onClick={() => setPaidMode(true)}>Paid unlock</button>
           </div>
-          {filmSalesReady === false && !paidEnabled && <p className="paid-setup-note">Set up payouts in Account &amp; billing to offer paid films.</p>}
+          {filmSalesAvailable !== false && filmSalesReady === false && !paidEnabled && <p className="paid-setup-note">Set up payouts in Account &amp; billing to offer paid films.</p>}
           {paidEnabled && (
             <>
               <div className="paid-form-grid">
@@ -398,13 +416,14 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
                   Price
                   <div className="price-field">
                     <span>$</span>
-                    <input inputMode="numeric" value={paidPriceDollars} onChange={(event) => updatePaidPrice(event.target.value)} />
+                    <input disabled={filmSalesAvailable === false} inputMode="numeric" value={paidPriceDollars} onChange={(event) => updatePaidPrice(event.target.value)} />
                     <em>one-time</em>
                   </div>
                 </label>
                 <label>
                   Unlock label
                   <input
+                    disabled={filmSalesAvailable === false}
                     placeholder="Speeches Film"
                     value={video?.paidUnlockLabel ?? video?.title ?? ''}
                     onChange={(event) => updateVideo({ paidUnlockLabel: event.target.value })}
@@ -413,6 +432,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
                 <label className="wide">
                   Bonus tagline <span>optional</span>
                   <input
+                    disabled={filmSalesAvailable === false}
                     placeholder="The full, uncut speeches - every toast and tear."
                     value={video?.paidUnlockTagline ?? ''}
                     onChange={(event) => updateVideo({ paidUnlockTagline: event.target.value })}

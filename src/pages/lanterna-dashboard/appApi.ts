@@ -42,6 +42,7 @@ async function getApi<T>(path: string) {
 }
 
 export type ConnectStatus = {
+  available: boolean;
   chargesEnabled: boolean;
   detailsSubmitted: boolean;
   payoutsEnabled: boolean;

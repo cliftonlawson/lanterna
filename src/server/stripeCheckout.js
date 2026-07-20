@@ -11,6 +11,14 @@ const STRIPE_API_BASE = 'https://api.stripe.com/v1';
 const PLATFORM_FEE_RATE = 0.1;
 const WEBHOOK_TOLERANCE_SECONDS = 300;
 
+export function filmSalesEnabled(env = {}) {
+  return ['1', 'true', 'yes', 'on'].includes(String(env.FILM_SALES_ENABLED || '').trim().toLowerCase());
+}
+
+function filmSalesComingSoon() {
+  return errorJson('Film sales are coming soon.', 503, { code: 'film_sales_coming_soon' });
+}
+
 function stripeSecretKey(env) {
   return env.STRIPE_SECRET_KEY;
 }
@@ -174,9 +182,20 @@ async function filmSalesSummary(env, accountId) {
 
 export async function stripeConnectStatus(request, env) {
   const { accountId } = await accountContext(request, env);
-  const saved = await connectedAccountForLanternaAccount(env, accountId);
+  if (!filmSalesEnabled(env)) return json({
+    available: false,
+    chargesEnabled: false,
+    detailsSubmitted: false,
+    payoutsEnabled: false,
+    requirementsDue: [],
+    sales: { grossCents: 0, lanternaFeeCents: 0, salesCount: 0, studioEarningsCents: 0 },
+    state: 'not_connected',
+  });
+
   const sales = await filmSalesSummary(env, accountId);
+  const saved = await connectedAccountForLanternaAccount(env, accountId);
   if (!saved) return json({
+    available: true,
     chargesEnabled: false,
     detailsSubmitted: false,
     payoutsEnabled: false,
@@ -188,6 +207,7 @@ export async function stripeConnectStatus(request, env) {
   const account = await stripeGet(env, `/accounts/${encodeURIComponent(saved.stripe_account_id)}`);
   await saveConnectedAccount(env, accountId, account);
   return json({
+    available: true,
     chargesEnabled: account.charges_enabled === true,
     detailsSubmitted: account.details_submitted === true,
     payoutsEnabled: account.payouts_enabled === true,
@@ -199,6 +219,7 @@ export async function stripeConnectStatus(request, env) {
 
 export async function startStripeConnectOnboarding(request, env) {
   const { accountId, user } = await accountContext(request, env, { ownerOnly: true });
+  if (!filmSalesEnabled(env)) return filmSalesComingSoon();
   let saved = await connectedAccountForLanternaAccount(env, accountId);
 
   if (!saved) {
@@ -293,6 +314,7 @@ async function createPendingPurchase(env, { amountCents, gallery, purchaseId, se
 }
 
 export async function createPaidUnlockCheckout(request, env, slug) {
+  if (!filmSalesEnabled(env)) return filmSalesComingSoon();
   const gallery = await publicGalleryBySlug(env, slug);
   if (!gallery) return errorJson('Gallery not found.', 404);
   const accessError = publicGalleryAccessError(gallery);

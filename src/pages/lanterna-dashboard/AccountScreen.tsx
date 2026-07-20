@@ -14,6 +14,16 @@ type Props = {
   onSignUp?: () => void;
 };
 
+const COMING_SOON_CONNECT: ConnectStatus = {
+  available: false,
+  chargesEnabled: false,
+  detailsSubmitted: false,
+  payoutsEnabled: false,
+  requirementsDue: [],
+  sales: { grossCents: 0, lanternaFeeCents: 0, salesCount: 0, studioEarningsCents: 0 },
+  state: 'not_connected',
+};
+
 export function AccountScreen({ demo = false, refreshAfterCheckout = false, workspace, onBack, onSignUp }: Props) {
   const { signOut } = useAuth();
   const [connect, setConnect] = useState<ConnectStatus | null>(null);
@@ -36,21 +46,14 @@ export function AccountScreen({ demo = false, refreshAfterCheckout = false, work
 
   useEffect(() => {
     if (demo || !workspace.accountId) {
-      setConnect({
-        chargesEnabled: false,
-        detailsSubmitted: false,
-        payoutsEnabled: false,
-        requirementsDue: [],
-        sales: { grossCents: 0, lanternaFeeCents: 0, salesCount: 0, studioEarningsCents: 0 },
-        state: 'not_connected',
-      });
+      setConnect(COMING_SOON_CONNECT);
       return undefined;
     }
     let mounted = true;
     void getConnectStatus().then((status) => {
       if (mounted) setConnect(status);
     }).catch(() => {
-      if (mounted) setConnectError('Film sales status could not be loaded.');
+      if (mounted) setConnect(COMING_SOON_CONNECT);
     });
     return () => {
       mounted = false;
@@ -226,11 +229,16 @@ export function AccountScreen({ demo = false, refreshAfterCheckout = false, work
           <section className="account-card account-sales-card">
             <header className="account-card-heading">
               <h2>Film sales</h2>
-              <span className={`account-sales-state is-${connect?.state ?? 'loading'}`}>{connectStateLabel(connect)}</span>
+              <span className={`account-sales-state is-${connect ? connect.available !== true ? 'coming-soon' : connect.state : 'loading'}`}>{connectStateLabel(connect)}</span>
             </header>
             {!connect && !connectError && <div className="account-sales-loading"><Loader2 size={17} /> Loading film sales</div>}
             {connectError && <p className="account-sales-error">{connectError}</p>}
-            {connect?.state === 'active' ? (
+            {connect && connect.available !== true ? (
+              <div className="account-coming-soon-banner">
+                <span>Coming soon</span>
+                <div><strong>Sell bonus films inside your client galleries.</strong><p>Payout setup and paid unlocks are in final review. Gallery delivery is available now.</p></div>
+              </div>
+            ) : connect?.state === 'active' ? (
               <>
                 <p>Your studio is ready to sell paid films. LANTERNA keeps 10%; Stripe deducts its processing fee separately.</p>
                 <div className="account-sales-totals">
@@ -307,6 +315,7 @@ export function AccountScreen({ demo = false, refreshAfterCheckout = false, work
 
 function connectStateLabel(connect: ConnectStatus | null) {
   if (!connect) return 'Checking';
+  if (!connect.available) return 'Coming soon';
   if (connect.state === 'active') return 'Ready';
   if (connect.state === 'restricted') return 'Action needed';
   if (connect.state === 'pending') return 'In progress';

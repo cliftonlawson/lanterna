@@ -100,11 +100,12 @@ PUBLIC_DELIVERY_BASE_URL=https://deliver.your-domain.com
 STRIPE_SECRET_KEY=your-stripe-platform-secret-key
 STRIPE_WEBHOOK_SECRET=your-platform-webhook-signing-secret
 STRIPE_CONNECT_WEBHOOK_SECRET=your-connect-webhook-signing-secret
+FILM_SALES_ENABLED=false
 ```
 
 `EMAIL_PROVIDER_API_KEY` should stay send-only in Resend. `RESEND_READ_API_KEY` is a separate server-only full-access key used only for provider-side delivery-status lookups. `EMAIL_PROVIDER=mock` keeps delivery email calls as previews while the rest of the delivery proof rows write to Supabase.
 
-Stripe Connect uses direct charges so the studio is the merchant of record. Create a Connect webhook for `https://app.lanterna.video/api/stripe/connect/webhook`, enable connected-account events, and subscribe to `account.updated`, `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_failed`, `payment_intent.payment_failed`, and `charge.refunded`. Store that endpoint's signing secret separately as `STRIPE_CONNECT_WEBHOOK_SECRET`.
+Film sales are launch-gated and default to off. Keep `FILM_SALES_ENABLED=false` until Stripe Connect approval and live paid-unlock acceptance testing are complete, then set it to `true`. Stripe Connect uses direct charges so the studio is the merchant of record. Create a Connect webhook for `https://app.lanterna.video/api/stripe/connect/webhook`, enable connected-account events, and subscribe to `account.updated`, `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_failed`, `payment_intent.payment_failed`, and `charge.refunded`. Store that endpoint's signing secret separately as `STRIPE_CONNECT_WEBHOOK_SECRET`.
 
 Platform subscriptions, upload blocks, top-ups, and white-label purchases use the platform webhook at `https://app.lanterna.video/api/stripe/webhook`. Subscribe it to `checkout.session.completed`, `checkout.session.expired`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`, and `charge.refunded`. The same endpoint also receives platform paid-unlock events. Billing amounts and allowances come from `src/shared/billingCatalog.js`; Stripe Checkout receives those server-owned values and the webhook verifies them again before granting an entitlement.
 

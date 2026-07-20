@@ -39,5 +39,8 @@ assert.match(publicGallery, /unlock_recovery/);
 assert.match(migration, /reverse_one_time_billing/);
 assert.match(platformBilling, /event\.type === 'charge\.refunded'/);
 assert.match(stripe, /markPurchaseRefunded/);
+assert.match(stripe, /FILM_SALES_ENABLED/);
+assert.match(stripe, /film_sales_coming_soon/);
+assert.match(landing, /Coming soon/);
 
 console.log('launch integrity checks passed');
