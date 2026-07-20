@@ -146,9 +146,6 @@
 .landing-section-link { margin-top: 32px; }
 .landing-monetize { position: relative; z-index: 2; overflow: hidden; margin-block: 56px; padding: 136px 24px; border-block: 1px solid var(--landing-border); background: radial-gradient(60% 120% at 78% 42%,rgba(110,231,249,.08),transparent 60%),linear-gradient(180deg,#060A13,#080D19); }
 .landing-monetize-inner { position: relative; max-width: 1152px; margin: 0 auto; display: grid; grid-template-columns: minmax(0,.88fr) minmax(0,1.12fr); gap: 88px; align-items: center; }
-.landing-monetize-copy > .landing-coming-soon-banner { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 12px; margin: 0 0 24px; padding: 12px 14px; border: 1px solid rgba(110,231,249,.28); border-radius: 14px; background: linear-gradient(120deg,rgba(110,231,249,.1),rgba(129,140,248,.08)); box-shadow: inset 0 1px rgba(255,255,255,.04); }
-.landing-monetize-copy > .landing-coming-soon-banner > span { padding: 7px 10px; border: 1px solid rgba(110,231,249,.38); border-radius: 99px; background: rgba(110,231,249,.12); color: #BDF6FF; font-size: 11px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
-.landing-monetize-copy > .landing-coming-soon-banner > p { margin: 0; color: var(--landing-text-2); font-size: 13px; line-height: 1.45; }
 .landing-monetize-copy > p:nth-of-type(2) { max-width: 520px; margin: 24px 0 28px; color: var(--landing-text-2); font-size: 18px; line-height: 1.65; }
 .landing-monetize-copy > div { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 30px; }
 .landing-monetize-copy > div span { padding: 8px 13px; border: 1px solid var(--landing-border); border-radius: 99px; background: rgba(110,231,249,.04); color: var(--landing-muted); font-size: 14.5px; font-weight: 600; }
@@ -1665,9 +1662,9 @@ button.upload-queue-main { cursor: pointer; }
 .paid-unlock-panel > header span { display: flex; color: var(--accent-ink); }
 .paid-unlock-panel > header strong { font-size: 14px; }
 .paid-unlock-panel > p { margin: 0 0 16px; color: var(--muted); font-size: 12.5px; }
-.paid-coming-soon-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; padding: 12px 14px; border: 1px solid rgba(110,231,249,.25); border-radius: 12px; background: linear-gradient(120deg,rgba(110,231,249,.1),rgba(129,140,248,.08)); }
-.paid-coming-soon-banner > span { flex: 0 0 auto; padding: 6px 9px; border: 1px solid rgba(110,231,249,.35); border-radius: 99px; color: var(--accent-ink); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
-.paid-coming-soon-banner > p { margin: 0; color: var(--text2); font-size: 12.5px; line-height: 1.45; }
+.paid-unavailable-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; padding: 12px 14px; border: 1px solid rgba(110,231,249,.25); border-radius: 12px; background: linear-gradient(120deg,rgba(110,231,249,.1),rgba(129,140,248,.08)); }
+.paid-unavailable-banner > span { flex: 0 0 auto; padding: 6px 9px; border: 1px solid rgba(110,231,249,.35); border-radius: 99px; color: var(--accent-ink); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.paid-unavailable-banner > p { margin: 0; color: var(--text2); font-size: 12.5px; line-height: 1.45; }
 .paid-segmented { display: inline-flex; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: var(--hover); }
 .paid-segmented button { padding: 9px 20px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 800; cursor: pointer; }
 .paid-segmented button.on { background: var(--cta); color: #051019; }
@@ -1788,7 +1785,7 @@ button.upload-queue-main { cursor: pointer; }
 .account-sales-card .account-sales-state.is-active { background: rgba(104,211,145,.13); color: #7add9d; }
 .account-sales-card .account-sales-state.is-restricted { background: rgba(248,113,113,.13); color: #fca5a5; }
 .account-sales-card .account-sales-state.is-pending { background: rgba(250,204,21,.12); color: #f6d760; }
-.account-sales-card .account-sales-state.is-coming-soon { border: 1px solid rgba(110,231,249,.25); background: linear-gradient(120deg,rgba(110,231,249,.13),rgba(129,140,248,.12)); color: var(--accent-ink); }
+.account-sales-card .account-sales-state.is-unavailable { border: 1px solid rgba(110,231,249,.25); background: linear-gradient(120deg,rgba(110,231,249,.13),rgba(129,140,248,.12)); color: var(--accent-ink); }
 .account-sales-card .account-sales-state.is-not_connected,
 .account-sales-card .account-sales-state.is-loading { background: rgba(148,163,184,.12); color: var(--muted); }
 .account-sales-loading { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; }
@@ -1803,10 +1800,10 @@ button.upload-queue-main { cursor: pointer; }
 .account-sales-action:disabled svg { animation: accountSpin .9s linear infinite; }
 .account-sales-link { display: inline-flex; align-items: center; gap: 7px; color: var(--accent-ink); font-size: 13px; font-weight: 800; text-decoration: none; }
 .account-sales-link:hover { text-decoration: underline; }
-.account-coming-soon-banner { display: flex; align-items: flex-start; gap: 13px; padding: 16px; border: 1px solid rgba(110,231,249,.24); border-radius: 14px; background: linear-gradient(120deg,rgba(110,231,249,.1),rgba(129,140,248,.07)); }
-.account-coming-soon-banner > span { flex: 0 0 auto; padding: 6px 9px; border: 1px solid rgba(110,231,249,.34); border-radius: 99px; color: var(--accent-ink); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
-.account-coming-soon-banner strong { display: block; color: var(--text); font-size: 13.5px; }
-.account-coming-soon-banner p { margin: 5px 0 0 !important; color: var(--muted) !important; font-size: 12.5px; line-height: 1.5; }
+.account-sales-unavailable-banner { display: flex; align-items: flex-start; gap: 13px; padding: 16px; border: 1px solid rgba(110,231,249,.24); border-radius: 14px; background: linear-gradient(120deg,rgba(110,231,249,.1),rgba(129,140,248,.07)); }
+.account-sales-unavailable-banner > span { flex: 0 0 auto; padding: 6px 9px; border: 1px solid rgba(110,231,249,.34); border-radius: 99px; color: var(--accent-ink); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.account-sales-unavailable-banner strong { display: block; color: var(--text); font-size: 13.5px; }
+.account-sales-unavailable-banner p { margin: 5px 0 0 !important; color: var(--muted) !important; font-size: 12.5px; line-height: 1.5; }
 .paid-segmented button:disabled { cursor: not-allowed; opacity: .45; }
 .paid-setup-note { margin-top: 10px !important; color: var(--accent-ink) !important; }
 @keyframes accountSpin { to { transform: rotate(360deg); } }

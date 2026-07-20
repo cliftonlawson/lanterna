@@ -14,6 +14,10 @@ const migration = read('../supabase/migrations/20260720120000_launch_integrity_h
 const platformBilling = read('../src/server/platformBilling.js');
 const publicGallery = read('../src/pages/PublicGalleryPage.tsx');
 const stripe = read('../src/server/stripeCheckout.js');
+const legal = read('../src/pages/LegalPage.tsx');
+const account = read('../src/pages/lanterna-dashboard/AccountScreen.tsx');
+const videoDrawer = read('../src/pages/lanterna-dashboard/VideoDrawer.tsx');
+const wrangler = read('../wrangler.toml');
 
 assert.match(context, /resetPasswordForEmail/);
 assert.match(context, /PASSWORD_RECOVERY/);
@@ -53,7 +57,11 @@ assert.match(migration, /reverse_one_time_billing/);
 assert.match(platformBilling, /event\.type === 'charge\.refunded'/);
 assert.match(stripe, /markPurchaseRefunded/);
 assert.match(stripe, /FILM_SALES_ENABLED/);
-assert.match(stripe, /film_sales_coming_soon/);
-assert.match(landing, /Coming soon/);
+assert.match(stripe, /film_sales_unavailable/);
+assert.match(wrangler, /FILM_SALES_ENABLED = "true"/);
+assert.doesNotMatch(landing, /coming soon/i);
+assert.doesNotMatch(legal, /coming soon|not currently available|when the feature launches/i);
+assert.doesNotMatch(account, /coming soon/i);
+assert.doesNotMatch(videoDrawer, /coming soon/i);
 
 console.log('launch integrity checks passed');

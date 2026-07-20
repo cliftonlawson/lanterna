@@ -100,7 +100,7 @@ globalThis.fetch = async (input, init = {}) => {
 };
 
 try {
-  const comingSoon = await createPaidUnlockCheckout(
+  const unavailable = await createPaidUnlockCheckout(
     new Request('https://deliver.lanterna.video/api/public/gallery/alexa-and-nick/paid-unlock/checkout', {
       body: JSON.stringify({ videoId }),
       headers: { 'content-type': 'application/json' },
@@ -109,8 +109,8 @@ try {
     { ...env, FILM_SALES_ENABLED: 'false' },
     'alexa-and-nick',
   );
-  assert.equal(comingSoon.status, 503);
-  assert.equal((await comingSoon.json()).details.code, 'film_sales_coming_soon');
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).details.code, 'film_sales_unavailable');
 
   const disabledStatus = await stripeConnectStatus(
     new Request('https://app.lanterna.video/api/connect/status', {
@@ -126,7 +126,7 @@ try {
     { ...env, FILM_SALES_ENABLED: 'false' },
   );
   assert.equal(disabledOnboarding.status, 503);
-  assert.equal((await disabledOnboarding.json()).details.code, 'film_sales_coming_soon');
+  assert.equal((await disabledOnboarding.json()).details.code, 'film_sales_unavailable');
 
   const onboarding = await startStripeConnectOnboarding(authenticatedRequest('https://app.lanterna.video/api/connect/onboarding'), env);
   assert.equal(onboarding.status, 200);

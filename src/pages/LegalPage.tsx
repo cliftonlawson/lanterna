@@ -25,7 +25,7 @@ const pages: Record<LegalPageKind, { eyebrow: string; title: string; sections: A
       { title: 'Your content', body: 'You retain ownership of content you upload. You grant LANTERNA the limited permission needed to store, process, display, and deliver it. You confirm that you have the rights and client permissions required to use the content.' },
       { title: 'Acceptable use', body: 'Do not upload unlawful, abusive, infringing, malicious, or deceptive content, attempt to bypass security or usage limits, or use LANTERNA to harm another person or system.' },
       { title: 'Billing and storage', body: 'Plan and upload allowances renew or expire as shown at checkout and in Account & billing. Upload top-ups supplement an active plan or block. White-label access is included with subscriptions and may be purchased for an eligible upload block.' },
-      { title: 'Paid films', body: 'Paid films are not currently available. When the feature launches, studios will choose which films to sell and set their prices. Stripe will process the payment and payout. LANTERNA will deduct the platform fee displayed before the studio enables film sales; Stripe processing fees will be separate.' },
+      { title: 'Paid films', body: 'Studios choose which films to sell and set their prices. Stripe processes the payment and payout. LANTERNA deducts the platform fee displayed before the studio enables film sales; Stripe processing fees are separate.' },
       { title: 'Availability and changes', body: 'We work to keep LANTERNA reliable but cannot promise uninterrupted availability. We may suspend use that threatens the service or violates these terms. Material changes will be posted with an updated effective date.' },
     ],
   },
@@ -35,7 +35,7 @@ const pages: Record<LegalPageKind, { eyebrow: string; title: string; sections: A
     sections: [
       { title: 'Subscriptions', body: 'You can manage or cancel a subscription from Account & billing. Cancellation takes effect at the end of the current paid period unless Stripe or applicable law requires a different result.' },
       { title: 'Upload blocks and add-ons', body: 'One-time upload blocks, top-ups, and white-label add-ons are generally non-refundable after the allowance or feature has been applied. Contact us if a charge was duplicated or a technical failure prevented delivery.' },
-      { title: 'Paid films', body: 'Paid films are not currently available. When the feature launches, the studio offering a paid film will control the customer relationship for that film. A refunded film purchase will lose paid access once Stripe confirms the refund. LANTERNA support can help identify the studio or investigate a payment problem.' },
+      { title: 'Paid films', body: 'The studio offering a paid film controls the customer relationship for that film. A refunded film purchase loses paid access once Stripe confirms the refund. LANTERNA support can help identify the studio or investigate a payment problem.' },
     ],
   },
 };

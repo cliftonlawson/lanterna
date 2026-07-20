@@ -47,7 +47,7 @@ const workflow = [
   {
     number: '03',
     title: 'Send with confidence',
-    desc: 'Deliver one polished link with permissions, passwords, downloads, viewing activity, and paid bonus films coming soon.',
+    desc: 'Deliver one polished link with permissions, passwords, downloads, viewing activity, and paid bonus films.',
   },
 ];
 
@@ -76,7 +76,7 @@ const faqs = [
   },
   {
     question: 'How do paid bonus films work?',
-    answer: 'Paid bonus films are coming soon. Once live, you will choose the film, set the price, and offer it inside the same client gallery. A 10% LANTERNA fee will apply, plus Stripe processing fees.',
+    answer: 'Choose the film, set the price, and offer it inside the same client gallery. A 10% LANTERNA fee applies, plus Stripe processing fees.',
   },
 ];
 
@@ -205,10 +205,9 @@ export function Landing({ initialContactOpen = false, onChoosePlan, onGetStarted
           <div className="landing-monetize-inner">
             <div className="landing-monetize-copy">
               <p className="landing-eyebrow">Paid bonus films</p>
-              <div className="landing-coming-soon-banner"><span>Coming soon</span><p>Film sales are in final payout review. Galleries and delivery are available now.</p></div>
               <h2>One gallery can hold <span>more value.</span></h2>
               <p>
-                Soon you can offer ceremony films, speeches, reels, and extended edits as paid additions
+                Offer ceremony films, speeches, reels, and extended edits as paid additions
                 inside the gallery your couple already knows. You set the price; LANTERNA handles checkout.
               </p>
               <div>{sellTypes.map((type) => <span key={type}>{type}</span>)}</div>
@@ -370,7 +369,7 @@ function PaidUnlockGraphic() {
   return (
     <div className="landing-paid-graphic">
       <div className="landing-payout-badge">
-        <span>$</span><div><strong>$270 studio share at launch</strong><small>on a $300 unlock · before Stripe fees</small></div>
+        <span>$</span><div><strong>$270 studio share</strong><small>on a $300 unlock · before Stripe fees</small></div>
       </div>
       <div className="landing-paid-card">
         <header><i /><strong>Sofia &amp; Bennett</strong><em>·</em><span>Films</span></header>
@@ -387,7 +386,7 @@ function PaidUnlockGraphic() {
             />
             <div className="landing-price-chip"><Lock size={12} />$300</div>
             <section><span><Lock size={21} /></span><small>BONUS FILM</small><h3>Ceremony Film</h3><p>42:18 · full ceremony presentation</p></section>
-            <span className="landing-unlock-button"><Lock size={14} />Coming soon · $300</span>
+            <span className="landing-unlock-button"><Lock size={14} />Unlock Ceremony · $300</span>
           </article>
           {[
             {

@@ -180,7 +180,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
   const setPaidMode = (enabled: boolean) => {
     if (!video) return;
     if (enabled && filmSalesAvailable === false) {
-      onShowToast('Paid film sales are coming soon');
+      onShowToast('Paid film sales are temporarily unavailable');
       return;
     }
     if (enabled && filmSalesReady !== true) {
@@ -399,9 +399,9 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
           </header>
           <p>Include this film in the gallery, or lock it as a paid bonus edit the couple can unlock.</p>
           {filmSalesAvailable === false && (
-            <div className="paid-coming-soon-banner">
-              <span>Coming soon</span>
-              <p>Paid unlocks are in final review. Keep this film included to deliver it now.</p>
+            <div className="paid-unavailable-banner">
+              <span>Unavailable</span>
+              <p>Paid unlocks are temporarily paused. Keep this film included to deliver it now.</p>
             </div>
           )}
           <div className="paid-segmented" role="group" aria-label="Film access pricing">

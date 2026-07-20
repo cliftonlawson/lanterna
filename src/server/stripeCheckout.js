@@ -15,8 +15,8 @@ export function filmSalesEnabled(env = {}) {
   return ['1', 'true', 'yes', 'on'].includes(String(env.FILM_SALES_ENABLED || '').trim().toLowerCase());
 }
 
-function filmSalesComingSoon() {
-  return errorJson('Film sales are coming soon.', 503, { code: 'film_sales_coming_soon' });
+function filmSalesUnavailable() {
+  return errorJson('Film sales are temporarily unavailable.', 503, { code: 'film_sales_unavailable' });
 }
 
 function stripeSecretKey(env) {
@@ -219,7 +219,7 @@ export async function stripeConnectStatus(request, env) {
 
 export async function startStripeConnectOnboarding(request, env) {
   const { accountId, user } = await accountContext(request, env, { ownerOnly: true });
-  if (!filmSalesEnabled(env)) return filmSalesComingSoon();
+  if (!filmSalesEnabled(env)) return filmSalesUnavailable();
   let saved = await connectedAccountForLanternaAccount(env, accountId);
 
   if (!saved) {
@@ -314,7 +314,7 @@ async function createPendingPurchase(env, { amountCents, gallery, purchaseId, se
 }
 
 export async function createPaidUnlockCheckout(request, env, slug) {
-  if (!filmSalesEnabled(env)) return filmSalesComingSoon();
+  if (!filmSalesEnabled(env)) return filmSalesUnavailable();
   const gallery = await publicGalleryBySlug(env, slug);
   if (!gallery) return errorJson('Gallery not found.', 404);
   const accessError = publicGalleryAccessError(gallery);
