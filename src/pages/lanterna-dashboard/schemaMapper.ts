@@ -109,6 +109,15 @@ export type DeliveryRecipientRecord = {
   created_at: string;
 };
 
+export type DeliveryEventRecord = {
+  id: string;
+  gallery_id: string;
+  video_id: string | null;
+  event_type: 'sent' | 'opened' | 'video_viewed' | 'downloaded' | 'failed';
+  occurred_at: string;
+  metadata: Record<string, unknown> | null;
+};
+
 export type GallerySchemaBundle = {
   gallery: GalleryRecord;
   design: GalleryDesignRecord;
@@ -223,6 +232,19 @@ function relativeDate(value: string | null) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function activityDate(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return 'Just now';
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export function canPersistGalleryToSchema(gallery: DashboardGallery) {
   return gallery.access !== 'Password' || gallery.passwordSet;
 }
@@ -316,13 +338,15 @@ export function galleryToSchemaBundle(gallery: DashboardGallery, accountId: stri
   };
 }
 
-export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients: DeliveryRecipientRecord[] }, index = 0): DashboardGallery {
+export function schemaBundleToGallery(bundle: GallerySchemaBundle & { events: DeliveryEventRecord[]; recipients: DeliveryRecipientRecord[] }, index = 0): DashboardGallery {
   const slug = bundle.gallery.slug || bundle.gallery.id;
   const fallbackGradient = mediaTileGradients[index % mediaTileGradients.length];
   const videos = [...bundle.videos].sort((a, b) => a.sort_order - b.sort_order);
   const photos = [...bundle.photos].sort((a, b) => a.sort_order - b.sort_order);
   const albums = [...bundle.albums].sort((a, b) => a.sort_order - b.sort_order);
   const featuredVideo = videos.find((video) => video.id === bundle.design.featured_video_id) ?? videos[0];
+  const videoTitles = new Map(videos.map((video) => [video.id, video.title]));
+  const activityEvents = bundle.events.filter((event) => ['opened', 'video_viewed', 'downloaded'].includes(event.event_type));
   const designDefaults = defaultGalleryDesign(bundle.gallery.name, fallbackGradient);
   const enabledButtons = bundle.design.enabled_buttons ?? designDefaults.topButtons;
   const savedBackgroundGradient = 'backgroundGradient' in enabledButtons
@@ -380,7 +404,7 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
     project: projectNameMap[bundle.gallery.project_type],
     videos: videos.length,
     photos: photos.length,
-    views: '0',
+    views: String(activityEvents.filter((event) => event.event_type === 'opened').length),
     status: bundle.gallery.status,
     archived: Boolean(bundle.gallery.archived_at),
     access: accessNameMap[bundle.gallery.access_type],
@@ -432,5 +456,16 @@ export function schemaBundleToGallery(bundle: GallerySchemaBundle & { recipients
       status: recipient.status,
       at: recipient.status === 'opened' ? relativeDate(recipient.first_opened_at) : relativeDate(recipient.last_sent_at),
     })),
+    activity: activityEvents.slice(0, 30).map((event) => ({
+      id: event.id,
+      type: event.event_type as 'opened' | 'video_viewed' | 'downloaded',
+      at: activityDate(event.occurred_at),
+      videoTitle: event.video_id ? videoTitles.get(event.video_id) : undefined,
+    })),
+    activityCounts: {
+      downloads: activityEvents.filter((event) => event.event_type === 'downloaded').length,
+      opens: activityEvents.filter((event) => event.event_type === 'opened').length,
+      plays: activityEvents.filter((event) => event.event_type === 'video_viewed').length,
+    },
   };
 }

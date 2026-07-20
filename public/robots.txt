@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /auth
+Disallow: /g/
+Disallow: /gallery/
+Sitemap: https://lanterna.video/sitemap.xml

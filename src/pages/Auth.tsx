@@ -1,5 +1,5 @@
 import { useEffect, useState, FormEvent } from 'react';
-import { Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Check, CheckCircle2, Eye, EyeOff, Loader2, LockKeyhole } from 'lucide-react';
 import { LanternLogo } from '../components/LanternLogo';
 import { useAuth } from '../contexts/useAuth';
 import { userMessage } from '../lib/userMessages';
@@ -9,9 +9,10 @@ type Props = {
 };
 
 export function Auth({ onBack }: Props) {
-  const { signIn, signUp, resendConfirmation } = useAuth();
-  const [mode, setMode] = useState<'signin' | 'signup'>(() => {
+  const { recoveryMode, requestPasswordReset, signIn, signUp, resendConfirmation, updatePassword } = useAuth();
+  const [mode, setMode] = useState<'forgot' | 'recovery' | 'signin' | 'signup'>(() => {
     const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'recovery') return 'recovery';
     return params.get('mode') === 'signup' ? 'signup' : 'signin';
   });
   const [email, setEmail] = useState('');
@@ -22,30 +23,53 @@ export function Auth({ onBack }: Props) {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
+    if (recoveryMode) setMode('recovery');
+  }, [recoveryMode]);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const checkoutSku = params.get('checkout');
+    if (checkoutSku) window.localStorage.setItem('lanterna.pendingCheckoutSku', checkoutSku);
     if (params.get('error_description')) {
       setError(authMessage(params.get('error_description') ?? 'Unable to confirm email.'));
       window.history.replaceState({}, '', '/auth');
       return;
     }
 
-    if (params.get('type') === 'signup' || params.get('type') === 'recovery') {
+    if (params.get('type') === 'signup') {
       setNotice('Email confirmed. Sign in with your password to continue.');
       window.history.replaceState({}, '', '/auth');
     }
   }, []);
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const selectMode = (nextMode: 'forgot' | 'signin' | 'signup') => {
+    setMode(nextMode);
+    setError('');
+    setNotice('');
+  };
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
     setError('');
     setNotice('');
     setLoading(true);
 
-    const fn = mode === 'signin' ? signIn : signUp;
-    const { error } = await fn(email, password);
+    let authError: Error | null = null;
+    if (mode === 'forgot') {
+      ({ error: authError } = await requestPasswordReset(email));
+    } else if (mode === 'recovery') {
+      ({ error: authError } = await updatePassword(password));
+    } else {
+      ({ error: authError } = await (mode === 'signin' ? signIn(email, password) : signUp(email, password)));
+    }
 
-    if (error) {
-      setError(authMessage(error.message));
+    if (authError) {
+      setError(authMessage(authError.message));
+    } else if (mode === 'forgot') {
+      setNotice('If an account exists for that email, a password-reset link is on its way.');
+    } else if (mode === 'recovery') {
+      setNotice('Password updated. You can continue to your dashboard.');
+      window.history.replaceState({}, '', '/');
     } else if (mode === 'signup') {
       setNotice('Account created. Check your email for the confirmation link, then come back here to sign in.');
     }
@@ -62,138 +86,136 @@ export function Auth({ onBack }: Props) {
     setError('');
     setNotice('');
     setLoading(true);
-    const { error } = await resendConfirmation(email);
-    if (error) {
-      setError(authMessage(error.message));
+    const { error: resendError } = await resendConfirmation(email);
+    if (resendError) {
+      setError(authMessage(resendError.message));
     } else {
       setNotice('Confirmation email sent. Open the newest message, then come back here to sign in.');
     }
     setLoading(false);
   };
 
-  return (
-    <div className="min-h-screen bg-[#080808] flex items-center justify-center px-4">
-      {/* Background glow */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[700px] h-[500px] bg-orange-500/[0.06] rounded-full blur-[120px]" />
-      </div>
+  const creating = mode === 'signup';
+  const forgot = mode === 'forgot';
+  const recovering = mode === 'recovery';
 
-      <div className="relative z-10 w-full max-w-md">
-        {/* Back button */}
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-300 transition-colors mb-8"
-        >
-          <ArrowLeft size={14} />
-          Back to home
+  return (
+    <div className="auth-page">
+      <div className="auth-ambient" aria-hidden="true"><span /><span /><span /></div>
+      <main className="auth-shell">
+        <button className="auth-back" onClick={onBack} type="button">
+          <ArrowLeft size={17} /> Back to home
         </button>
 
-        {/* Card */}
-        <div className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-8">
-          {/* Logo */}
-          <div className="flex items-center justify-center gap-2.5 mb-8">
-            <LanternLogo size={36} />
-            <span className="text-xl font-semibold tracking-tight text-white">LANTERNA</span>
+        <section className="auth-story" aria-labelledby="auth-story-title">
+          <div className="auth-brand">
+            <LanternLogo size={42} />
+            <span>LANTERNA</span>
           </div>
-
-          {/* Tab toggle */}
-          <div className="flex bg-white/[0.04] rounded-xl p-1 mb-7">
-            <button
-              onClick={() => { setMode('signin'); setError(''); setNotice(''); }}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                mode === 'signin'
-                  ? 'bg-orange-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.3)]'
-                  : 'text-gray-500 hover:text-gray-300'
-              }`}
-            >
-              Sign in
-            </button>
-            <button
-              onClick={() => { setMode('signup'); setError(''); setNotice(''); }}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                mode === 'signup'
-                  ? 'bg-orange-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.3)]'
-                  : 'text-gray-500 hover:text-gray-300'
-              }`}
-            >
-              Create account
-            </button>
+          <div className="auth-story-copy">
+            <p className="auth-eyebrow">Film delivery, illuminated</p>
+            <h1 id="auth-story-title">A brighter way to <span>finish the story.</span></h1>
+            <p>Build a client experience with the same care you bring to the film—cinematic galleries, thoughtful controls, and every delivery in one calm workspace.</p>
           </div>
+          <div className="auth-benefits" aria-label="LANTERNA account benefits">
+            <span><Check size={16} /> 10 GB welcome allowance</span>
+            <span><Check size={16} /> Nine cinematic layouts</span>
+            <span><Check size={16} /> No card required</span>
+          </div>
+          <div className="auth-preview" aria-hidden="true">
+            <div className="auth-preview-top"><i /><i /><i /><span>deliver.lanterna.video</span></div>
+            <div className="auth-preview-scene">
+              <small>THE WEDDING FILM</small>
+              <strong>Emma &amp; James</strong>
+              <div><b>Play all films</b><span>Villa Cimbrone · Ravello</span></div>
+            </div>
+          </div>
+        </section>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm text-gray-400 mb-1.5">Email</label>
+        <section className="auth-card" aria-labelledby="auth-title">
+          <div className="auth-card-mark">
+            <LanternLogo size={30} />
+            <span>LANTERNA</span>
+          </div>
+          {!forgot && !recovering && <div className="auth-tabs" role="tablist" aria-label="Account access">
+            <button aria-selected={!creating} className={!creating ? 'is-active' : ''} onClick={() => selectMode('signin')} role="tab" type="button">Sign in</button>
+            <button aria-selected={creating} className={creating ? 'is-active' : ''} onClick={() => selectMode('signup')} role="tab" type="button">Create account</button>
+          </div>}
+
+          <header className="auth-card-header">
+            <p>{recovering ? 'Account recovery' : forgot ? 'Password help' : creating ? 'Your studio starts here' : 'Studio access'}</p>
+            <h2 id="auth-title">{recovering ? 'Choose a new password' : forgot ? 'Reset your password' : creating ? 'Create your account' : 'Welcome back'}</h2>
+            <span>{recovering ? 'Use at least 8 characters.' : forgot ? 'We will send a secure reset link if the account exists.' : creating ? 'Start free with 10 GB for your first year.' : 'Sign in to continue building and delivering.'}</span>
+          </header>
+
+          <form className="auth-form" onSubmit={handleSubmit}>
+            {!recovering && <label>
+              <span>Email address</span>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                inputMode="email"
+                onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@studio.com"
                 required
-                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-2.5 text-white placeholder-gray-600 text-sm focus:outline-none focus:border-orange-500/50 focus:bg-white/[0.06] transition-all"
+                type="email"
+                value={email}
               />
-            </div>
+            </label>}
 
-            <div>
-              <label className="block text-sm text-gray-400 mb-1.5">Password</label>
-              <div className="relative">
+            {!forgot && <label>
+              <span>Password</span>
+              <div className="auth-password-field">
                 <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete={creating || recovering ? 'new-password' : 'current-password'}
+                  minLength={recovering ? 8 : 6}
+                  onChange={(event) => setPassword(event.target.value)}
                   placeholder="••••••••"
                   required
-                  minLength={6}
-                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-2.5 pr-11 text-white placeholder-gray-600 text-sm focus:outline-none focus:border-orange-500/50 focus:bg-white/[0.06] transition-all"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
                 />
                 <button
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((visible) => !visible)}
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400 transition-colors"
                 >
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
-              {mode === 'signup' && (
-                <p className="text-xs text-gray-600 mt-1.5">Minimum 6 characters</p>
+              {(creating || recovering) && <small>Use at least {recovering ? '8' : '6'} characters.</small>}
+            </label>}
+
+            {creating && <p className="auth-legal-note">By creating an account, you agree to the <a href="/terms">Terms</a> and acknowledge the <a href="/privacy">Privacy Notice</a>.</p>}
+            {mode === 'signin' && <button className="auth-text-action" onClick={() => selectMode('forgot')} type="button">Forgot your password?</button>}
+            {(forgot || recovering) && <button className="auth-text-action" onClick={() => selectMode('signin')} type="button">Back to sign in</button>}
+
+            <div aria-live="polite">
+              {error && (
+                <div className="auth-message is-error">
+                  <AlertCircle size={18} />
+                  <div>
+                    <p>{error}</p>
+                    {error.toLowerCase().includes('not confirmed') && (
+                      <button disabled={loading} onClick={handleResend} type="button">Resend confirmation email</button>
+                    )}
+                  </div>
+                </div>
               )}
+              {notice && <div className="auth-message is-success"><CheckCircle2 size={18} /><p>{notice}</p></div>}
             </div>
 
-            {error && (
-              <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
-                <p className="text-sm text-red-400">{error}</p>
-                {error.toLowerCase().includes('not confirmed') && (
-                  <button
-                    type="button"
-                    onClick={handleResend}
-                    disabled={loading}
-                    className="mt-3 text-sm font-medium text-red-200 hover:text-white disabled:opacity-60"
-                  >
-                    Resend confirmation email
-                  </button>
-                )}
-              </div>
-            )}
-
-            {notice && (
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
-                <p className="text-sm text-emerald-300">{notice}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/50 text-white py-2.5 rounded-xl font-medium text-sm transition-all hover:shadow-[0_0_30px_rgba(249,115,22,0.4)] disabled:cursor-not-allowed mt-2"
-            >
+            <button className="auth-submit" disabled={loading} type="submit">
+              {loading && <Loader2 aria-hidden="true" className="auth-spinner" size={18} />}
               {loading
-                ? mode === 'signin' ? 'Signing in...' : 'Creating account...'
-                : mode === 'signin' ? 'Sign in' : 'Create account'
-              }
+                ? recovering ? 'Updating password' : forgot ? 'Sending reset link' : creating ? 'Creating account' : 'Signing in'
+                : recovering ? 'Save new password' : forgot ? 'Send reset link' : creating ? 'Create free account' : 'Sign in to LANTERNA'}
             </button>
           </form>
 
-        </div>
-      </div>
+          <p className="auth-secure-note"><LockKeyhole size={14} /> Secure studio access</p>
+        </section>
+      </main>
     </div>
   );
 }

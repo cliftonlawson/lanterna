@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { WELCOME_ALLOWANCE_GB } from '../../shared/billingCatalog.js';
 
 export type Theme = 'dark' | 'light';
 export type View = 'galleries' | 'studio' | 'vendor' | 'account' | 'upload';
@@ -13,6 +14,7 @@ export type WorkspaceAccount = {
   accentColor: string;
   defaultDownloads: boolean;
   customDomain: string | null;
+  whiteLabel: boolean;
   allowanceUsedGb: number;
   allowanceTotalGb: number;
   hotBytesStored: number;
@@ -47,6 +49,13 @@ export type DeliveryRecipient = {
 export type DeliveryDraft = {
   message: string;
   recipients: string;
+};
+
+export type GalleryActivity = {
+  id: string;
+  type: 'opened' | 'video_viewed' | 'downloaded';
+  at: string;
+  videoTitle?: string;
 };
 
 export type MediaVideo = {
@@ -137,6 +146,12 @@ export type DashboardGallery = {
   albums: PhotoAlbum[];
   photoItems: GalleryPhoto[];
   recipients: DeliveryRecipient[];
+  activity?: GalleryActivity[];
+  activityCounts?: {
+    downloads: number;
+    opens: number;
+    plays: number;
+  };
 };
 
 export type StatusMeta = {
@@ -159,8 +174,9 @@ export const defaultWorkspaceAccount: WorkspaceAccount = {
   accentColor: '#6EE7F9',
   defaultDownloads: true,
   customDomain: null,
+  whiteLabel: true,
   allowanceUsedGb: 0,
-  allowanceTotalGb: 50,
+  allowanceTotalGb: WELCOME_ALLOWANCE_GB,
   hotBytesStored: 0,
   coldBytesStored: 0,
   streamMinutesStored: 0,

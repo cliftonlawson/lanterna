@@ -53,6 +53,21 @@ export async function supabaseRest(env, path, options = {}, fetchImpl = fetch) {
   return payload;
 }
 
+export async function deleteSupabaseAuthUser(env, userId, fetchImpl = fetch) {
+  assertSupabaseAdmin(env);
+  const response = await fetchImpl(`${supabaseUrl(env)}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    headers: {
+      apikey: serviceKey(env),
+      authorization: `Bearer ${serviceKey(env)}`,
+    },
+  });
+  if (response.status === 404) return false;
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.message || payload?.error || 'Account authentication record could not be deleted.');
+  return true;
+}
+
 export async function accountForUser(env, userId, fetchImpl = fetch) {
   const rows = await supabaseRest(
     env,

@@ -3,14 +3,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Lock, Music2, Pause, Play, RefreshCw, Share2, X } from 'lucide-react';
 import {
   createPaidUnlockCheckout,
+  confirmPaidUnlockRecovery,
   getPublicGallery,
+  recordPublicGalleryActivity,
   type PaidUnlockSessionPayload,
+  type PublicGalleryActivityType,
   type PublicGalleryPayload,
   recoverPaidUnlock,
   unlockPublicGallery,
   verifyPaidUnlockSession,
 } from './lanterna-dashboard/appApi';
 import { CustomVideoPlayer } from './lanterna-dashboard/CustomVideoPlayer';
+import { LanternLogo } from '../components/LanternLogo';
 import { GalleryMobilePreviewFrame, GalleryPreviewFrame, type PreviewFilm } from './lanterna-dashboard/GalleryStudioScreen';
 import {
   defaultDeliveryDraft,
@@ -162,6 +166,16 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
   const [lockedFilm, setLockedFilm] = useState<PreviewFilm | null>(null);
   const [copiedAction, setCopiedAction] = useState('');
   const [verifiedUnlocks, setVerifiedUnlocks] = useState<Record<string, PaidUnlockSessionPayload>>({});
+  const [activitySessionId] = useState(() => publicGallerySessionId(payload.gallery.slug));
+  const recordedActivity = useRef(new Set<string>());
+  const recordActivity = useCallback((eventType: PublicGalleryActivityType, videoId?: string) => {
+    const key = `${eventType}:${videoId || ''}`;
+    if (recordedActivity.current.has(key)) return;
+    recordedActivity.current.add(key);
+    void recordPublicGalleryActivity(payload.gallery.slug, eventType, activitySessionId, videoId).catch(() => {
+      recordedActivity.current.delete(key);
+    });
+  }, [activitySessionId, payload.gallery.slug]);
   const baseMediaUrls = useMemo(() => Object.fromEntries(
     Object.entries(payload.media ?? {}).map(([key, signed]) => [key, signed.url]),
   ), [payload.media]);
@@ -199,6 +213,11 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
     }
     setSelectedFilm(film);
   };
+
+  useEffect(() => {
+    recordActivity('opened');
+  }, [recordActivity]);
+
   const runGalleryAction = (action: string) => {
     const galleryUrl = new URL(window.location.href);
     galleryUrl.searchParams.delete('film');
@@ -227,6 +246,7 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
     });
     const downloadUrl = video ? downloadUrls[video.id] : '';
     if (!gallery.allowDownloads || !video || !downloadUrl) return;
+    recordActivity('downloaded', video.id);
 
     const link = document.createElement('a');
     link.href = downloadUrl;
@@ -260,6 +280,23 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
   }, [applyPaidUnlock, payload.gallery.slug]);
 
   useEffect(() => {
+    const url = new URL(window.location.href);
+    const token = url.searchParams.get('unlock_recovery');
+    if (!token) return;
+    let cancelled = false;
+    void confirmPaidUnlockRecovery(payload.gallery.slug, token).then((unlock) => {
+      if (!cancelled) applyPaidUnlock(unlock);
+    }).catch(() => {
+      // Invalid and expired links are removed without exposing purchase details.
+    }).finally(() => {
+      if (cancelled) return;
+      url.searchParams.delete('unlock_recovery');
+      window.history.replaceState({}, '', url.toString());
+    });
+    return () => { cancelled = true; };
+  }, [applyPaidUnlock, payload.gallery.slug]);
+
+  useEffect(() => {
     if (selectedFilm) return;
     const filmId = new URL(window.location.href).searchParams.get('film');
     if (!filmId) return;
@@ -279,6 +316,11 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
           <GalleryPreviewFrame actionLabels={{ Embed: copiedAction === 'Embed' ? 'Copied' : 'Embed', Share: copiedAction === 'Share' ? 'Copied' : 'Share' }} gallery={deliveredGallery} workspace={workspace} className="public-gallery-preview" crop mediaUrls={mediaUrls} publicMode onAction={runGalleryAction} onFilmSelect={selectFilm} />
         )}
       </section>
+      {!workspace.whiteLabel && (
+        <a className="public-gallery-attribution" href="https://lanterna.video" rel="noreferrer" target="_blank">
+          <LanternLogo size={16} /> Powered by LANTERNA
+        </a>
+      )}
       {musicUrl && (
         <BackgroundMusic
           name={gallery.design.musicTrackName}
@@ -286,8 +328,8 @@ function PublicGalleryView({ payload }: { payload: PublicGalleryPayload }) {
           url={musicUrl}
         />
       )}
-      {selectedFilm && <PublicFilmPlayer downloadUrls={downloadUrls} film={selectedFilm} gallery={deliveredGallery} mediaUrls={mediaUrls} streamPlayback={streamPlayback} onClose={() => setSelectedFilm(null)} />}
-      {lockedFilm && <PublicPaidUnlockModal film={lockedFilm} gallery={gallery} onClose={() => setLockedFilm(null)} onUnlock={applyPaidUnlock} />}
+      {selectedFilm && <PublicFilmPlayer downloadUrls={downloadUrls} film={selectedFilm} gallery={deliveredGallery} mediaUrls={mediaUrls} streamPlayback={streamPlayback} onClose={() => setSelectedFilm(null)} onDownload={(videoId) => recordActivity('downloaded', videoId)} onPlay={(videoId) => recordActivity('video_viewed', videoId)} />}
+      {lockedFilm && <PublicPaidUnlockModal film={lockedFilm} gallery={gallery} onClose={() => setLockedFilm(null)} />}
     </main>
   );
 }
@@ -361,12 +403,10 @@ function PublicPaidUnlockModal({
   film,
   gallery,
   onClose,
-  onUnlock,
 }: {
   film: PreviewFilm;
   gallery: DashboardGallery;
   onClose: () => void;
-  onUnlock: (unlock: PaidUnlockSessionPayload) => void;
 }) {
   const price = dollarsFromCents(film.paidUnlockPriceCents);
   const label = film.paidUnlockLabel || film.title;
@@ -424,10 +464,10 @@ function PublicPaidUnlockModal({
               if (!film.sourceVideoId) return;
               setRecoverLoading(true);
               setCheckoutMessage('');
-              void recoverPaidUnlock(gallery.id, film.sourceVideoId, recoverEmail).then((unlock) => {
-                onUnlock(unlock);
+              void recoverPaidUnlock(gallery.id, film.sourceVideoId, recoverEmail).then(({ message }) => {
+                setCheckoutMessage(message);
               }).catch((error) => {
-                setCheckoutMessage(userMessage(error, 'We could not find that unlock. Check the email and try again.'));
+                setCheckoutMessage(userMessage(error, 'Recovery email could not be sent. Try again.'));
               }).finally(() => {
                 setRecoverLoading(false);
               });
@@ -460,6 +500,8 @@ function PublicFilmPlayer({
   mediaUrls,
   streamPlayback,
   onClose,
+  onDownload,
+  onPlay,
 }: {
   downloadUrls: Record<string, string>;
   film: PreviewFilm;
@@ -467,6 +509,8 @@ function PublicFilmPlayer({
   mediaUrls: Record<string, string>;
   streamPlayback: NonNullable<PublicGalleryPayload['stream']>;
   onClose: () => void;
+  onDownload: (videoId: string) => void;
+  onPlay: (videoId: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const sourceVideo = gallery.videoItems.find((video) => video.id === film.sourceVideoId) ?? gallery.videoItems.find((video) => video.title === film.title);
@@ -502,6 +546,9 @@ function PublicFilmPlayer({
           className="public-player-hero"
           fallbackBackground={film.gradient}
           posterUrl={posterUrl}
+          onPlay={() => {
+            if (sourceVideo) onPlay(sourceVideo.id);
+          }}
           streamUrl={streamUrl}
           title={film.title}
           videoUrl={playbackUrl}
@@ -514,7 +561,9 @@ function PublicFilmPlayer({
           </div>
           <div className="public-player-actions">
             <button onClick={copyShareLink}><Share2 size={17} /> {copied ? 'Copied' : 'Share'}</button>
-            <a aria-disabled={!downloadAllowed} className={!downloadAllowed ? 'is-disabled' : ''} href={downloadAllowed ? downloadUrl : undefined} download>
+            <a aria-disabled={!downloadAllowed} className={!downloadAllowed ? 'is-disabled' : ''} href={downloadAllowed ? downloadUrl : undefined} download onClick={() => {
+              if (downloadAllowed && sourceVideo) onDownload(sourceVideo.id);
+            }}>
               <Download size={17} /> Download
             </a>
             <button aria-label="Close player" onClick={onClose}><X size={20} /></button>
@@ -523,6 +572,19 @@ function PublicFilmPlayer({
       </section>
     </div>
   );
+}
+
+function publicGallerySessionId(slug: string) {
+  const storageKey = `lanterna_gallery_session:${slug}`;
+  try {
+    const stored = window.sessionStorage.getItem(storageKey);
+    if (stored) return stored;
+    const created = crypto.randomUUID().replace(/-/g, '_');
+    window.sessionStorage.setItem(storageKey, created);
+    return created;
+  } catch {
+    return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 18)}`;
+  }
 }
 
 function useMediaQuery(query: string) {
@@ -552,6 +614,7 @@ function publicPayloadToWorkspace(payload: PublicGalleryPayload): WorkspaceAccou
     studioName: payload.workspace.studioName,
     streamMinutesStored: 0,
     tagline: payload.workspace.tagline ?? '',
+    whiteLabel: payload.workspace.whiteLabel,
     userEmail: '',
     userName: '',
   };

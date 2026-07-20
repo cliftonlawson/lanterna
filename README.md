@@ -72,8 +72,12 @@ The Cloudflare Pages Function at `functions/api/[[path]].js` exposes the backend
 POST /api/upload/slot
 POST /api/upload/complete
 POST /api/delivery/notify
+GET  /api/billing/status
+POST /api/billing/checkout
+POST /api/billing/portal
 GET  /api/connect/status
 POST /api/connect/onboarding
+POST /api/stripe/webhook
 POST /api/stripe/connect/webhook
 GET  /api/public/gallery/:slug
 ```
@@ -100,8 +104,10 @@ STRIPE_CONNECT_WEBHOOK_SECRET=your-connect-webhook-signing-secret
 
 `EMAIL_PROVIDER_API_KEY` should stay send-only in Resend. `RESEND_READ_API_KEY` is a separate server-only full-access key used only for provider-side delivery-status lookups. `EMAIL_PROVIDER=mock` keeps delivery email calls as previews while the rest of the delivery proof rows write to Supabase.
 
-Stripe Connect uses direct charges so the studio is the merchant of record. Create a Connect webhook for `https://app.lanterna.video/api/stripe/connect/webhook`, enable connected-account events, and subscribe to `account.updated`, `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_failed`, and `payment_intent.payment_failed`. Store that endpoint's signing secret separately as `STRIPE_CONNECT_WEBHOOK_SECRET`.
+Stripe Connect uses direct charges so the studio is the merchant of record. Create a Connect webhook for `https://app.lanterna.video/api/stripe/connect/webhook`, enable connected-account events, and subscribe to `account.updated`, `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_failed`, `payment_intent.payment_failed`, and `charge.refunded`. Store that endpoint's signing secret separately as `STRIPE_CONNECT_WEBHOOK_SECRET`.
+
+Platform subscriptions, upload blocks, top-ups, and white-label purchases use the platform webhook at `https://app.lanterna.video/api/stripe/webhook`. Subscribe it to `checkout.session.completed`, `checkout.session.expired`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`, and `charge.refunded`. The same endpoint also receives platform paid-unlock events. Billing amounts and allowances come from `src/shared/billingCatalog.js`; Stripe Checkout receives those server-owned values and the webhook verifies them again before granting an entitlement.
 
 ## Next External Pieces
 
-Supabase CRUD is wired and smoke-tested. The next live integration step is adding real Cloudflare credentials, running the Pages Function locally or in Cloudflare, and replacing the current upload simulation with browser-to-R2/Stream transfers.
+Before deploying platform billing, apply the latest Supabase migrations and add the platform webhook events listed above to the existing Stripe endpoint. Run the first subscription and one-time block purchases in Stripe test mode before switching the platform key to live mode.

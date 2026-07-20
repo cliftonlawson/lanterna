@@ -1,5 +1,11 @@
 import { errorJson } from './http.js';
 
+export function sourceFilesAvailable(gallery, now = Date.now()) {
+  if (!gallery.source_file_expires_at) return true;
+  const sourceExpiresAt = Date.parse(gallery.source_file_expires_at);
+  return Number.isFinite(sourceExpiresAt) && now <= sourceExpiresAt;
+}
+
 export function publicGalleryAccessError(gallery) {
   const now = Date.now();
   const accessExpiresAt = gallery.access_expires_at ? Date.parse(gallery.access_expires_at) : null;

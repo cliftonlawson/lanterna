@@ -21,6 +21,7 @@ declare global {
 type Props = {
   className?: string;
   fallbackBackground?: string;
+  onPlay?: () => void;
   onTimeChange?: (seconds: number) => void;
   posterUrl?: string;
   streamUrl?: string;
@@ -30,12 +31,13 @@ type Props = {
 
 let streamSdkPromise: Promise<void> | null = null;
 
-export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeChange, posterUrl, streamUrl, title, videoUrl }: Props) {
+export function CustomVideoPlayer({ className = '', fallbackBackground, onPlay, onTimeChange, posterUrl, streamUrl, title, videoUrl }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<StreamPlayer | null>(null);
   const mutedRef = useRef(true);
+  const onPlayRef = useRef(onPlay);
   const [active, setActive] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
@@ -51,6 +53,10 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+
+  useEffect(() => {
+    onPlayRef.current = onPlay;
+  }, [onPlay]);
 
   useEffect(() => {
     onTimeChange?.(currentTime);
@@ -110,6 +116,7 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
       };
       const markPlaying = () => {
         setPlaying(true);
+        onPlayRef.current?.();
         sync();
       };
       const markPaused = () => {
@@ -157,6 +164,7 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
     };
     const markPlaying = () => {
       setPlaying(true);
+      onPlayRef.current?.();
       sync();
     };
     const markPaused = () => {

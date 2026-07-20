@@ -22,6 +22,12 @@ const disabledSupabaseClient = {
     async resend() {
       return { data: {}, error: new Error('Supabase is not configured.') };
     },
+    async resetPasswordForEmail() {
+      return { data: {}, error: new Error('Supabase is not configured.') };
+    },
+    async updateUser() {
+      return { data: { user: null }, error: new Error('Supabase is not configured.') };
+    },
     async signOut() {
       return { error: null };
     },
@@ -81,6 +87,7 @@ export type VendorBranding = {
   logo_r2_key: string | null;
   accent_color: string;
   custom_domain: string | null;
+  white_label_until: string | null;
   default_downloads: boolean;
   updated_at: string;
 };
@@ -239,6 +246,8 @@ export type AccountUsage = {
   account_id: string;
   allowance_used_gb: number;
   allowance_total_gb: number;
+  allowance_period_start: string | null;
+  allowance_period_end: string | null;
   hot_bytes_stored: number;
   cold_bytes_stored: number;
   stream_minutes_stored: number;

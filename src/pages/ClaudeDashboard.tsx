@@ -14,6 +14,7 @@ import {
   processUploadedVideos,
   putFileToR2,
   setGalleryAccessRemote,
+  startPlatformBillingCheckout,
   startVideoPlaybackPreparation,
   uploadVideoMasterMultipart,
 } from './lanterna-dashboard/appApi';
@@ -63,8 +64,9 @@ type Props = {
 };
 
 export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
+  const [refreshBillingAfterCheckout] = useState(() => new URLSearchParams(window.location.search).get('billing') === 'success');
   const [theme, setTheme] = useState<Theme>('dark');
-  const [view, setView] = useState<View>(() => window.location.search.includes('connect=') ? 'account' : 'galleries');
+  const [view, setView] = useState<View>(() => /(?:connect|billing)=/.test(window.location.search) ? 'account' : 'galleries');
   const [studioTab, setStudioTab] = useState<StudioTab>('videos');
   const [folder, setFolder] = useState<ProjectName | null>(null);
   const [archiveTab, setArchiveTab] = useState<'active' | 'archived'>('active');
@@ -84,13 +86,34 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
   const galleriesRef = useRef<DashboardGallery[]>([]);
   const createGalleryRequestRef = useRef(false);
   const uploadAbortControllersRef = useRef(new Map<string, AbortController>());
+  const pendingCheckoutStartedRef = useRef(false);
 
   const activeGallery = galleries.find((gallery) => gallery.id === activeId) ?? galleries[0];
 
   useEffect(() => {
-    if (!window.location.search.includes('connect=')) return;
-    window.history.replaceState({}, '', window.location.pathname);
+    const params = new URLSearchParams(window.location.search);
+    const billingResult = params.get('billing');
+    if (billingResult === 'success') setToast('Payment received. Your allowance will update in a moment.');
+    if (billingResult === 'cancelled') setToast('Checkout cancelled. Nothing was charged.');
+    if (params.has('connect') || params.has('billing') || params.has('session_id')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   }, []);
+
+  useEffect(() => {
+    if (demo || pendingCheckoutStartedRef.current) return;
+    const sku = window.localStorage.getItem('lanterna.pendingCheckoutSku');
+    if (!sku) return;
+    pendingCheckoutStartedRef.current = true;
+    setView('account');
+    void startPlatformBillingCheckout(sku).then(({ checkoutUrl }) => {
+      window.localStorage.removeItem('lanterna.pendingCheckoutSku');
+      window.location.assign(checkoutUrl);
+    }).catch((error) => {
+      window.localStorage.removeItem('lanterna.pendingCheckoutSku');
+      setToast(error instanceof Error ? error.message : 'Checkout could not be opened.');
+    });
+  }, [demo]);
 
   useEffect(() => {
     galleriesRef.current = galleries;
@@ -940,7 +963,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
       )}
 
       {view === 'vendor' && <VendorDashboardScreen workspace={workspace} onWorkspaceChange={updateWorkspace} />}
-      {view === 'account' && <AccountScreen demo={demo} onSignUp={onSignUp} workspace={workspace} onBack={() => {
+      {view === 'account' && <AccountScreen demo={demo} refreshAfterCheckout={refreshBillingAfterCheckout} onSignUp={onSignUp} workspace={workspace} onBack={() => {
         setFolder(null);
         setView('galleries');
       }} />}

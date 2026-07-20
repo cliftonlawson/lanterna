@@ -49,6 +49,8 @@ Scope: server-side gate in upload slot routes, usage recording from upload compl
 Done when: an over-allowance account cannot get an upload slot with a surfaced reason, and an upload recorded through a raw API call increments `allowance_used_gb` without the client inserting usage.
 Verification: live temp-account check passed 2026-07-07. Over-allowance `/api/upload/slot` returned 422 `upload_allowance_exceeded`; raw `/api/upload/complete` moved `allowance_used_gb` from 0 to 1; authenticated client insert into `usage_events` returned 403 from RLS.
 
+Pricing fulfillment added 2026-07-18: new accounts receive one 10 GB welcome allowance with standard features and no paid entitlements. Server-owned Stripe Checkout covers the six monthly/annual subscription SKUs, three one-year blocks, the 5 GB top-up for active subscribers or block customers, and the $149/year white-label add-on. Verified webhooks grant catalog-matched entitlements, monthly billing keeps a separate annual allowance clock, top-ups share that clock, and annual renewal resets used allowance without rollover. The production database migrations and platform webhook event subscriptions must be applied before deployment.
+
 ### 7a. Stale upload-job expiry frees reservations
 Item 7 reserves allowance from `upload_jobs` in `pending` or `uploading`, but there is no stale-job expiry yet. Add a timeout that marks abandoned active jobs `errored` so their reserved bytes stop blocking future upload slots. Keep it small: either a lazy sweep inside the slot gate before reserved allowance is calculated, or a tiny scheduled/admin check.
 Done when: an old abandoned `pending` or `uploading` job is moved to `errored`, the next slot calculation no longer counts its `bytes_total`, and recent active jobs remain untouched.
@@ -163,7 +165,7 @@ Done when: each table and route has been checked, findings are written into the 
 
 ## Explicitly deferred (written down so they're decisions, not holes)
 
-- Two-clock retention jobs (hot to web at 2 years, web to archive at 10). No customers means no clocks expiring. Revisit at first paying studio. The clocks still get STAMPED at delivery (item 5) so history is correct when the jobs arrive.
+- Two-clock retention jobs (hot to web at 1 year, web to archive at 10). No customers means no clocks expiring. Revisit at first paying studio. The clocks still get STAMPED at delivery (item 5) so history is correct when the jobs arrive.
 - TV apps. Launch tier is cast/AirPlay-friendly player only, already in the SOP.
 - Cold-tier tuning, extension pricing surface, monetization beyond paid unlocks.
 - Email-safe logo hosting for delivery emails. Current delivery email uses a text brand mark because `vendor_branding.logo_r2_key` is private signed-URL state and old emails would eventually show broken images. Add a stable email-safe logo URL or proxy before inserting studio logos into transactional emails.

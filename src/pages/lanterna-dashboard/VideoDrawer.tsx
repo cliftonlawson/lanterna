@@ -422,8 +422,8 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
               <div className="payout-preview">
                 <span><DollarSign size={20} /></span>
                 <div>
-                  <strong>You receive ${payoutDollars} per unlock</strong>
-                  <p>Couple pays ${paidPriceDollars} / LANTERNA fee 10% (${feeDollars}) / paid out to your studio.</p>
+                  <strong>${payoutDollars} studio share before Stripe fees</strong>
+                  <p>Couple pays ${paidPriceDollars} / LANTERNA fee 10% (${feeDollars}) / Stripe processing is deducted separately.</p>
                 </div>
               </div>
             </>

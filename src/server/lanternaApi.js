@@ -13,12 +13,13 @@ import {
   r2MultipartNotFound,
   validateMultipartParts,
 } from './r2Multipart.js';
-import { publicGalleryAccessError } from './galleryAccess.js';
-import { accountForUser, assertGalleryMembership, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
+import { publicGalleryAccessError, sourceFilesAvailable } from './galleryAccess.js';
+import { accountForUser, assertGalleryMembership, currentUser, deleteSupabaseAuthUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
 import { empty, errorJson, json, readJson, routePath, safeSlug } from './http.js';
 import { buildDeliveryEmailContent, sendTransactionalEmail } from './transactionalEmail.js';
 import {
   createPaidUnlockCheckout,
+  confirmPaidUnlockRecovery,
   paidUnlockSession,
   recoverPaidUnlock,
   startStripeConnectOnboarding,
@@ -30,16 +31,19 @@ import { resolveGalleryDownloadPermission, resolveVideoDownloadPermission } from
 import { hashGalleryPassword, supportedGalleryPasswordHash, verifyGalleryPassword } from './galleryPassword.js';
 import { startStreamCopyFromMaster, StreamCopyStartError } from './videoIngestion.js';
 import { bytesToGb, UploadVerificationError, verifyDirectR2Object } from './uploadAccounting.js';
+import { createPlatformBillingCheckout, createPlatformBillingPortal, platformBillingStatus } from './platformBilling.js';
 
 const uploadTargetTypes = new Set(['video', 'photo']);
 const PUBLIC_STREAM_PLAYBACK_TTL_SECONDS = 21600;
-const DEFAULT_UPLOAD_ALLOWANCE_GB = 50;
+const DEFAULT_UPLOAD_ALLOWANCE_GB = 0;
 const DEFAULT_UPLOAD_JOB_STALE_MINUTES = 180;
 const MAX_STREAM_SOURCE_BYTES = 30 * 1024 * 1024 * 1024;
 const STREAM_FAILED_STATES = new Set(['error', 'failed', 'failure', 'cancelled', 'canceled']);
 const STREAM_TERMINAL_ERROR_PATTERN = /not found|does not exist|invalid/i;
 const GALLERY_ACCESS_TYPES = new Set(['public', 'password', 'private']);
 const GALLERY_PROJECT_TYPES = new Set(['wedding', 'engagement', 'portrait']);
+const PUBLIC_GALLERY_ACTIVITY_TYPES = new Set(['opened', 'video_viewed', 'downloaded']);
+const PUBLIC_GALLERY_SESSION_PATTERN = /^[A-Za-z0-9_-]{8,80}$/;
 
 function publicBaseUrl(env) {
   return String(env.PUBLIC_DELIVERY_BASE_URL || env.APP_URL || 'http://127.0.0.1:5173').replace(/\/+$/, '');
@@ -116,6 +120,10 @@ async function requireGalleryPreflight(env, gallery) {
 }
 
 async function accountUsage(env, accountId) {
+  await supabaseRest(env, 'rpc/refresh_account_billing_state', {
+    body: JSON.stringify({ p_account_id: accountId }),
+    method: 'POST',
+  });
   const rows = await supabaseRest(
     env,
     `account_usage?select=allowance_used_gb,allowance_total_gb&account_id=eq.${encodeURIComponent(accountId)}&limit=1`,
@@ -125,7 +133,7 @@ async function accountUsage(env, accountId) {
   const allowanceTotalGb = Number(usage.allowance_total_gb ?? DEFAULT_UPLOAD_ALLOWANCE_GB);
 
   return {
-    allowanceTotalGb: allowanceTotalGb > 0 ? allowanceTotalGb : DEFAULT_UPLOAD_ALLOWANCE_GB,
+    allowanceTotalGb: Math.max(0, allowanceTotalGb),
     allowanceUsedGb: Number(usage.allowance_used_gb ?? 0),
   };
 }
@@ -583,6 +591,42 @@ async function setGalleryArchived(request, env) {
   });
 }
 
+function uniqueValues(values) {
+  return [...new Set(values.filter(Boolean).map(String))];
+}
+
+async function galleryResourceInventory(env, accountId, galleryId) {
+  const [videos, photos, designs, uploadJobs] = await Promise.all([
+    supabaseRest(env, `videos?select=r2_key,web_copy_r2_key,poster_r2_key,stream_uid&gallery_id=eq.${encodeURIComponent(galleryId)}`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `photos?select=r2_key&gallery_id=eq.${encodeURIComponent(galleryId)}`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `gallery_design?select=background_r2_key,music_track_r2_key&gallery_id=eq.${encodeURIComponent(galleryId)}`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `upload_jobs?select=r2_key,stream_upload_id,multipart_upload_id&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(galleryId)}`, { headers: { accept: 'application/json' } }),
+  ]);
+  return {
+    multipart: (uploadJobs || []).filter((job) => job.r2_key && job.multipart_upload_id),
+    r2Keys: uniqueValues([
+      ...(videos || []).flatMap((video) => [video.r2_key, video.web_copy_r2_key, video.poster_r2_key]),
+      ...(photos || []).map((photo) => photo.r2_key),
+      ...(designs || []).flatMap((design) => [design.background_r2_key, design.music_track_r2_key]),
+      ...(uploadJobs || []).map((job) => job.r2_key),
+    ]),
+    streamUids: uniqueValues([
+      ...(videos || []).map((video) => video.stream_uid),
+      ...(uploadJobs || []).map((job) => job.stream_upload_id),
+    ]),
+  };
+}
+
+async function purgeGalleryResources(env, accountId, galleryId) {
+  const inventory = await galleryResourceInventory(env, accountId, galleryId);
+  for (const job of inventory.multipart) {
+    await abortR2MultipartUpload(env, { key: job.r2_key, uploadId: job.multipart_upload_id });
+  }
+  for (const key of inventory.r2Keys) await deleteR2Object(env, key);
+  for (const streamUid of inventory.streamUids) await deleteStreamVideo(env, streamUid);
+  return inventory;
+}
+
 async function deleteGallery(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
@@ -593,21 +637,90 @@ async function deleteGallery(request, env) {
       code: 'gallery_must_be_archived',
     });
   }
-  const result = await supabaseRest(env, 'rpc/request_gallery_soft_delete', {
-    method: 'POST',
-    body: JSON.stringify({
-      target_account_id: accountId,
-      target_gallery_id: galleryId,
-    }),
+  const inventory = await purgeGalleryResources(env, accountId, galleryId);
+  const deletedAt = new Date().toISOString();
+  await supabaseRest(env, `galleries?id=eq.${encodeURIComponent(galleryId)}&account_id=eq.${encodeURIComponent(accountId)}`, {
+    body: JSON.stringify({ deleted_at: deletedAt }),
+    headers: { prefer: 'return=minimal' },
+    method: 'PATCH',
   });
 
   return json({
-    alreadyDeleted: Boolean(result?.alreadyDeleted),
-    deletedAt: result?.deletedAt ?? null,
-    galleryId: result?.galleryId ?? galleryId,
+    deletedAt,
+    galleryId,
     ok: true,
-    purgeTaskId: result?.purgeTaskId ?? null,
+    removedObjects: inventory.r2Keys.length,
+    removedStreams: inventory.streamUids.length,
   });
+}
+
+async function storageStatus(request, env) {
+  const { accountId } = await requireAccountContext(request, env);
+  const galleries = await supabaseRest(env, `galleries?select=id,archived_at&account_id=eq.${encodeURIComponent(accountId)}&deleted_at=is.null`, { headers: { accept: 'application/json' } });
+  const galleryIds = (galleries || []).map((gallery) => gallery.id);
+  if (!galleryIds.length) {
+    await supabaseRest(env, `account_usage?account_id=eq.${encodeURIComponent(accountId)}`, {
+      body: JSON.stringify({ cold_bytes_stored: 0, hot_bytes_stored: 0, stream_minutes_stored: 0, synced_at: new Date().toISOString() }),
+      headers: { prefer: 'return=minimal' },
+      method: 'PATCH',
+    });
+    return json({ coldBytesStored: 0, hotBytesStored: 0, streamMinutesStored: 0 });
+  }
+
+  const filter = `in.(${galleryIds.join(',')})`;
+  const [videos, photos, designs, jobs] = await Promise.all([
+    supabaseRest(env, `videos?select=gallery_id,r2_bytes,duration_seconds,stream_ready&gallery_id=${filter}&deleted_at=is.null`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `photos?select=gallery_id,r2_bytes&gallery_id=${filter}&deleted_at=is.null`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `gallery_design?select=gallery_id,background_r2_key,music_track_r2_key&gallery_id=${filter}`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `upload_jobs?select=gallery_id,target_type,r2_key,verified_bytes,created_at&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=${filter}&status=eq.complete&order=created_at.desc`, { headers: { accept: 'application/json' } }),
+  ]);
+  const archived = new Set((galleries || []).filter((gallery) => gallery.archived_at).map((gallery) => gallery.id));
+  const designKeys = new Set((designs || []).flatMap((design) => [design.background_r2_key, design.music_track_r2_key]).filter(Boolean));
+  let hotBytesStored = 0;
+  let coldBytesStored = 0;
+  const addBytes = (galleryId, bytes) => {
+    if (archived.has(galleryId)) coldBytesStored += Number(bytes || 0);
+    else hotBytesStored += Number(bytes || 0);
+  };
+  for (const video of videos || []) addBytes(video.gallery_id, video.r2_bytes);
+  for (const photo of photos || []) addBytes(photo.gallery_id, photo.r2_bytes);
+  const countedKeys = new Set();
+  for (const job of jobs || []) {
+    if (!designKeys.has(job.r2_key) || countedKeys.has(job.r2_key)) continue;
+    countedKeys.add(job.r2_key);
+    addBytes(job.gallery_id, job.verified_bytes);
+  }
+  const streamMinutesStored = (videos || [])
+    .filter((video) => video.stream_ready)
+    .reduce((minutes, video) => minutes + Number(video.duration_seconds || 0) / 60, 0);
+  const syncedAt = new Date().toISOString();
+  await supabaseRest(env, `account_usage?account_id=eq.${encodeURIComponent(accountId)}`, {
+    body: JSON.stringify({ cold_bytes_stored: Math.round(coldBytesStored), hot_bytes_stored: Math.round(hotBytesStored), stream_minutes_stored: streamMinutesStored, synced_at: syncedAt }),
+    headers: { prefer: 'return=minimal' },
+    method: 'PATCH',
+  });
+  return json({ coldBytesStored: Math.round(coldBytesStored), hotBytesStored: Math.round(hotBytesStored), streamMinutesStored, syncedAt });
+}
+
+async function deleteAccount(request, env) {
+  const body = await readJson(request);
+  const { accountId, user } = await requireAccountContext(request, env);
+  const [memberships, branding, subscriptions] = await Promise.all([
+    supabaseRest(env, `account_members?select=role&account_id=eq.${encodeURIComponent(accountId)}&user_id=eq.${encodeURIComponent(user.id)}&limit=1`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `vendor_branding?select=studio_name&account_id=eq.${encodeURIComponent(accountId)}&limit=1`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `subscriptions?select=id&account_id=eq.${encodeURIComponent(accountId)}&status=in.(active,past_due)&limit=1`, { headers: { accept: 'application/json' } }),
+  ]);
+  if (memberships?.[0]?.role !== 'owner') return errorJson('Only the workspace owner can delete this account.', 403);
+  if (subscriptions?.length) return errorJson('Cancel the active subscription in Manage billing before deleting this account.', 409, { code: 'active_subscription' });
+  const expected = String(branding?.[0]?.studio_name || '').trim();
+  if (!expected || String(body.confirmation || '').trim() !== expected) {
+    return errorJson(`Type “${expected || 'your studio name'}” to confirm account deletion.`, 422);
+  }
+  const galleries = await supabaseRest(env, `galleries?select=id&account_id=eq.${encodeURIComponent(accountId)}`, { headers: { accept: 'application/json' } });
+  for (const gallery of galleries || []) await purgeGalleryResources(env, accountId, gallery.id);
+  await supabaseRest(env, `accounts?id=eq.${encodeURIComponent(accountId)}`, { method: 'DELETE', headers: { prefer: 'return=minimal' } });
+  await deleteSupabaseAuthUser(env, user.id);
+  return json({ deleted: true });
 }
 
 async function uploadSlot(request, env) {
@@ -1100,85 +1213,48 @@ async function deleteGalleryMedia(request, env) {
   const stagedVideoJobs = targetType === 'video'
     ? await supabaseRest(
       env,
-      `upload_jobs?select=id,r2_key,stream_upload_id&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_type=eq.video&target_id=eq.${encodeURIComponent(targetId)}&master_verified_at=not.is.null&upload_phase=neq.ready`,
+      `upload_jobs?select=id,r2_key,stream_upload_id,multipart_upload_id&account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_type=eq.video&target_id=eq.${encodeURIComponent(targetId)}&upload_phase=neq.ready`,
       { headers: { accept: 'application/json' } },
     )
     : [];
 
-  const deletedAt = new Date().toISOString();
-  await supabaseRest(env, `${table}?gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(targetId)}&deleted_at=is.null`, {
-    method: 'PATCH',
-    headers: { prefer: 'return=minimal' },
-    body: JSON.stringify({ deleted_at: deletedAt }),
-  });
-
-  const r2Keys = [...new Set(targetType === 'photo'
+  const r2Keys = uniqueValues(targetType === 'photo'
     ? [media.r2_key].filter(Boolean)
     : [
       media.r2_key,
       media.web_copy_r2_key,
       media.poster_r2_key,
       ...(stagedVideoJobs || []).map((job) => job.r2_key),
-    ].filter(Boolean))];
-  for (const r2Key of r2Keys) {
-    await supabaseRest(env, 'media_tasks', {
-      method: 'POST',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({
-        account_id: accountId,
-        gallery_id: gallery.id,
-        id: crypto.randomUUID(),
-        task_type: 'delete_r2',
-        payload: {
-          deleted_at: deletedAt,
-          r2_key: r2Key,
-          target_id: targetId,
-          target_type: targetType,
-        },
-        status: 'pending',
-        video_id: targetType === 'video' ? targetId : null,
-      }),
-    });
+    ].filter(Boolean));
+  for (const job of stagedVideoJobs || []) {
+    if (job.r2_key && job.multipart_upload_id) await abortR2MultipartUpload(env, { key: job.r2_key, uploadId: job.multipart_upload_id });
   }
+  for (const r2Key of r2Keys) await deleteR2Object(env, r2Key);
 
   const streamUids = targetType === 'video'
-    ? [...new Set([media.stream_uid, ...(stagedVideoJobs || []).map((job) => job.stream_upload_id)].filter(Boolean))]
+    ? uniqueValues([media.stream_uid, ...(stagedVideoJobs || []).map((job) => job.stream_upload_id)])
     : [];
-  for (const streamUid of streamUids) {
-    await supabaseRest(env, 'media_tasks', {
-      method: 'POST',
-      headers: { prefer: 'return=minimal' },
-      body: JSON.stringify({
-        account_id: accountId,
-        gallery_id: gallery.id,
-        id: crypto.randomUUID(),
-        task_type: 'delete_stream',
-        payload: {
-          deleted_at: deletedAt,
-          stream_uid: streamUid,
-          target_id: targetId,
-          target_type: targetType,
-        },
-        status: 'pending',
-        video_id: targetId,
-      }),
-    });
-  }
+  for (const streamUid of streamUids) await deleteStreamVideo(env, streamUid);
 
   if (stagedVideoJobs?.length) {
-    await supabaseRest(env, `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_type=eq.video&target_id=eq.${encodeURIComponent(targetId)}&upload_phase=neq.ready`, {
-      method: 'PATCH',
-      headers: { prefer: 'return=minimal' },
+    await supabaseRest(env, `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&gallery_id=eq.${encodeURIComponent(gallery.id)}&target_type=eq.video&target_id=eq.${encodeURIComponent(targetId)}`, {
       body: JSON.stringify({
         error_code: 'upload_target_deleted',
-        error_message: 'Video was deleted before playback preparation completed.',
+        error_message: 'Video was permanently deleted before playback preparation completed.',
         status: 'errored',
       }),
+      headers: { prefer: 'return=minimal' },
+      method: 'PATCH',
     });
   }
+  const deletedAt = new Date().toISOString();
+  await supabaseRest(env, `${table}?gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(targetId)}`, {
+    body: JSON.stringify({ deleted_at: deletedAt }),
+    headers: { prefer: 'return=minimal' },
+    method: 'PATCH',
+  });
 
   return json({
-    cleanupTasks: r2Keys.length + streamUids.length,
     deletedAt,
     ok: true,
     targetId,
@@ -1675,6 +1751,7 @@ function videoDownloadFileName(video) {
 }
 
 async function publicDownloadUrls(env, gallery, videos) {
+  if (!sourceFilesAvailable(gallery)) return {};
   const accountPrefix = `${gallery.account_id}/`;
   const signed = {};
 
@@ -1754,12 +1831,19 @@ async function publicGalleryPayload(env, gallery) {
   const photos = await supabaseRest(env, `photos?select=id,album_id,r2_key,width,height&gallery_id=eq.${encodeURIComponent(gallery.id)}&deleted_at=is.null&order=sort_order.asc`);
   const publishablePhotos = photos.filter((photo) => Boolean(photo.r2_key));
   const design = await supabaseRest(env, `gallery_design?select=*&gallery_id=eq.${encodeURIComponent(gallery.id)}&limit=1`);
-  const branding = await supabaseRest(env, `vendor_branding?select=studio_name,tagline,accent_color,custom_domain,default_downloads&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`);
+  const [branding, subscriptions] = await Promise.all([
+    supabaseRest(env, `vendor_branding?select=studio_name,tagline,accent_color,custom_domain,white_label_until,default_downloads&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`),
+    supabaseRest(env, `subscriptions?select=id&account_id=eq.${encodeURIComponent(gallery.account_id)}&status=eq.active&current_period_end=gt.${encodeURIComponent(new Date().toISOString())}&limit=1`),
+  ]);
   const designRow = design?.[0] ?? null;
   const brandingRow = branding?.[0] ?? null;
+  const whiteLabelUntil = brandingRow?.white_label_until ? Date.parse(brandingRow.white_label_until) : 0;
+  const whiteLabel = subscriptions.length > 0 || (Number.isFinite(whiteLabelUntil) && whiteLabelUntil > Date.now());
   const galleryAllowsDownloads = resolveGalleryDownloadPermission(designRow?.allow_downloads, brandingRow?.default_downloads);
+  const originalsAvailable = sourceFilesAvailable(gallery);
   const resolvedVideos = publishableVideos.map((video) => ({
     ...video,
+    r2_key: originalsAvailable ? video.r2_key : null,
     download_enabled: resolveVideoDownloadPermission(
       video.download_enabled,
       designRow?.allow_downloads,
@@ -1772,7 +1856,7 @@ async function publicGalleryPayload(env, gallery) {
     ...resolvedVideos.flatMap((video) => {
       if (video.paid_unlock_enabled) return [video.poster_r2_key];
       return [
-        video.download_enabled ? video.r2_key : null,
+        originalsAvailable && video.download_enabled ? video.r2_key : null,
         video.web_copy_r2_key,
         video.poster_r2_key,
       ];
@@ -1804,9 +1888,10 @@ async function publicGalleryPayload(env, gallery) {
     stream,
     workspace: {
       accentColor: brandingRow?.accent_color ?? '#6EE7F9',
-      customDomain: brandingRow?.custom_domain ?? null,
+      customDomain: whiteLabel ? brandingRow?.custom_domain ?? null : null,
       studioName: brandingRow?.studio_name ?? 'LANTERNA Studio',
       tagline: brandingRow?.tagline ?? null,
+      whiteLabel,
     },
   };
 }
@@ -1932,6 +2017,12 @@ async function publicGallery(request, env, slug) {
   return json(await publicGalleryPayload(env, gallery));
 }
 
+async function publicRateLimitKey(request, value) {
+  const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${ip}:${value}`));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 async function publicGalleryUnlock(request, env, slug) {
   const gallery = await publicGalleryBySlug(env, slug);
   if (!gallery) return errorJson('Gallery not found.', 404);
@@ -1940,12 +2031,88 @@ async function publicGalleryUnlock(request, env, slug) {
   if (accessError) return accessError;
   if (gallery.access_type !== 'password') return json(await publicGalleryPayload(env, gallery));
 
+  const allowed = await supabaseRest(env, 'rpc/consume_public_rate_limit', {
+    body: JSON.stringify({
+      p_key_hash: await publicRateLimitKey(request, gallery.id),
+      p_limit: 10,
+      p_scope: 'gallery_password',
+      p_window_seconds: 900,
+    }),
+    method: 'POST',
+  });
+  if (!allowed) return errorJson('Too many password attempts. Wait 15 minutes and try again.', 429);
+
   const body = await readJson(request);
   const password = String(body.password || '');
   const match = await passwordMatches(gallery, password);
   if (!match.ok) return errorJson(match.error || 'Incorrect gallery password.', 403);
 
   return json(await publicGalleryPayload(env, gallery));
+}
+
+async function deterministicActivityId(galleryId, sessionId, eventType, videoId) {
+  const input = new TextEncoder().encode(`${galleryId}:${sessionId}:${eventType}:${videoId || ''}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
+  const bytes = digest.slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function recordPublicGalleryActivity(request, env, slug) {
+  const gallery = await publicGalleryBySlug(env, slug);
+  if (!gallery) return errorJson('Gallery not found.', 404);
+
+  const accessError = publicGalleryAccessError(gallery);
+  if (accessError) return accessError;
+
+  const body = await readJson(request);
+  const eventType = String(body.eventType || '').trim();
+  const sessionId = String(body.sessionId || '').trim();
+  if (!PUBLIC_GALLERY_ACTIVITY_TYPES.has(eventType)) return errorJson('Choose a valid gallery activity.', 422);
+  if (!PUBLIC_GALLERY_SESSION_PATTERN.test(sessionId)) return errorJson('Gallery session is invalid.', 422);
+
+  let videoId = null;
+  if (eventType !== 'opened') {
+    videoId = String(body.videoId || '').trim();
+    if (!videoId) return errorJson('Film is required for this activity.', 422);
+    const rows = await supabaseRest(
+      env,
+      `videos?select=id,download_enabled&gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(videoId)}&visible_in_gallery=eq.true&deleted_at=is.null&limit=1`,
+      { headers: { accept: 'application/json' } },
+    );
+    const video = rows?.[0];
+    if (!video) return errorJson('Film not found in this gallery.', 404);
+    if (eventType === 'downloaded') {
+      const [designRows, brandingRows] = await Promise.all([
+        supabaseRest(env, `gallery_design?select=allow_downloads&gallery_id=eq.${encodeURIComponent(gallery.id)}&limit=1`, { headers: { accept: 'application/json' } }),
+        supabaseRest(env, `vendor_branding?select=default_downloads&account_id=eq.${encodeURIComponent(gallery.account_id)}&limit=1`, { headers: { accept: 'application/json' } }),
+      ]);
+      const downloadAllowed = sourceFilesAvailable(gallery) && resolveVideoDownloadPermission(
+        video.download_enabled,
+        designRows?.[0]?.allow_downloads,
+        brandingRows?.[0]?.default_downloads,
+      );
+      if (!downloadAllowed) return errorJson('Downloads are disabled for this film.', 403);
+    }
+  }
+
+  const id = await deterministicActivityId(gallery.id, sessionId, eventType, videoId);
+  await supabaseRest(env, 'delivery_events?on_conflict=id', {
+    method: 'POST',
+    headers: { prefer: 'resolution=ignore-duplicates,return=minimal' },
+    body: JSON.stringify({
+      event_type: eventType,
+      gallery_id: gallery.id,
+      id,
+      metadata: { session_id: sessionId, source: 'public_gallery' },
+      recipient_id: null,
+      video_id: videoId,
+    }),
+  });
+
+  return json({ ok: true });
 }
 
 export async function handleLanternaApiRequest(request, { env = {} } = {}) {
@@ -1977,14 +2144,21 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'gallery/publish') return await publishGallery(request, env);
     if (request.method === 'POST' && path === 'gallery/archive') return await setGalleryArchived(request, env);
     if (request.method === 'POST' && path === 'gallery/delete') return await deleteGallery(request, env);
+    if (request.method === 'GET' && path === 'storage/status') return await storageStatus(request, env);
+    if (request.method === 'POST' && path === 'account/delete') return await deleteAccount(request, env);
     if (request.method === 'POST' && path === 'delivery/record') return await deliveryRecord(request, env);
+    if (request.method === 'GET' && path === 'billing/status') return await platformBillingStatus(request, env);
+    if (request.method === 'POST' && path === 'billing/checkout') return await createPlatformBillingCheckout(request, env);
+    if (request.method === 'POST' && path === 'billing/portal') return await createPlatformBillingPortal(request, env);
     if (request.method === 'GET' && path === 'connect/status') return await stripeConnectStatus(request, env);
     if (request.method === 'POST' && path === 'connect/onboarding') return await startStripeConnectOnboarding(request, env);
     if (request.method === 'POST' && path === 'stripe/webhook') return await stripeWebhook(request, env);
     if (request.method === 'POST' && path === 'stripe/connect/webhook') return await stripeConnectWebhook(request, env);
     if (request.method === 'GET' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/session')) return await paidUnlockSession(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/session$/, ''));
     if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/recover')) return await recoverPaidUnlock(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/recover$/, ''));
+    if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/recover/confirm')) return await confirmPaidUnlockRecovery(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/recover\/confirm$/, ''));
     if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/paid-unlock/checkout')) return await createPaidUnlockCheckout(request, env, path.replace(/^public\/gallery\//, '').replace(/\/paid-unlock\/checkout$/, ''));
+    if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/activity')) return await recordPublicGalleryActivity(request, env, path.replace(/^public\/gallery\//, '').replace(/\/activity$/, ''));
     if (request.method === 'POST' && path.startsWith('public/gallery/') && path.endsWith('/unlock')) return await publicGalleryUnlock(request, env, path.replace(/^public\/gallery\//, '').replace(/\/unlock$/, ''));
     if (request.method === 'GET' && path.startsWith('public/gallery/')) return await publicGallery(request, env, path.replace(/^public\/gallery\//, ''));
 
