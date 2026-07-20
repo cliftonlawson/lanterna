@@ -8,6 +8,7 @@ const app = read('../src/App.tsx');
 const contact = read('../src/components/ContactModal.tsx');
 const context = read('../src/contexts/AuthContext.tsx');
 const headers = read('../public/_headers');
+const html = read('../index.html');
 const landing = read('../src/pages/Landing.tsx');
 const migration = read('../supabase/migrations/20260720120000_launch_integrity_hardening.sql');
 const platformBilling = read('../src/server/platformBilling.js');
@@ -30,6 +31,8 @@ assert.match(app, /window\.location\.pathname === '\/support'/);
 assert.match(headers, /Strict-Transport-Security/);
 assert.match(headers, /Content-Security-Policy/);
 assert.match(headers, /X-Content-Type-Options: nosniff/);
+assert.match(html, /https:\/\/lanterna\.video\/social\/lanterna-share\.png/);
+assert.doesNotMatch(html, /og:image[^>]+lumen-hero/);
 
 assert.match(api, /path === 'storage\/status'/);
 assert.match(api, /path === 'account\/delete'/);
