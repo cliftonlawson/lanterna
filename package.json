@@ -15,6 +15,7 @@
     "test:gallery-content": "node scripts/test-gallery-content-honesty.mjs",
     "test:gallery-deletion": "node scripts/test-gallery-deletion.mjs",
     "test:gallery-activity": "node scripts/test-gallery-activity.mjs",
+    "test:contact": "node scripts/test-contact-form.mjs",
     "test:media-task-ledger": "node scripts/test-honest-media-tasks.mjs",
     "test:music": "node scripts/test-music-upload.mjs",
     "test:platform-billing": "node scripts/test-platform-billing.mjs",
@@ -26,7 +27,7 @@
     "test:video-ingestion": "node scripts/test-dual-video-ingestion.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test:launch-integrity": "node scripts/test-launch-integrity.mjs",
-    "test": "npm run test:gallery-password && npm run test:gallery-slugs && npm run test:gallery-content && npm run test:gallery-deletion && npm run test:gallery-activity && npm run test:launch-integrity && npm run test:media-task-ledger && npm run test:music && npm run test:platform-billing && npm run test:pricing-entitlements && npm run test:r2-signing && npm run test:stripe-connect && npm run test:user-copy && npm run test:upload-accounting && npm run test:video-ingestion",
+    "test": "npm run test:gallery-password && npm run test:gallery-slugs && npm run test:gallery-content && npm run test:gallery-deletion && npm run test:gallery-activity && npm run test:contact && npm run test:launch-integrity && npm run test:media-task-ledger && npm run test:music && npm run test:platform-billing && npm run test:pricing-entitlements && npm run test:r2-signing && npm run test:stripe-connect && npm run test:user-copy && npm run test:upload-accounting && npm run test:video-ingestion",
     "verify": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {

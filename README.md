@@ -79,6 +79,7 @@ GET  /api/connect/status
 POST /api/connect/onboarding
 POST /api/stripe/webhook
 POST /api/stripe/connect/webhook
+POST /api/contact
 GET  /api/public/gallery/:slug
 ```
 
@@ -96,6 +97,7 @@ EMAIL_PROVIDER_API_KEY=your-resend-api-key
 RESEND_READ_API_KEY=your-full-access-resend-api-key
 EMAIL_FROM="Lanterna <deliver@lanterna.video>"
 EMAIL_REPLY_TO=team@hellobower.com
+CONTACT_EMAIL=team@hellobower.com
 PUBLIC_DELIVERY_BASE_URL=https://deliver.your-domain.com
 STRIPE_SECRET_KEY=your-stripe-platform-secret-key
 STRIPE_WEBHOOK_SECRET=your-platform-webhook-signing-secret

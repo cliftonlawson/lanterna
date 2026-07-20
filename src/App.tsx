@@ -19,7 +19,8 @@ function AppInner() {
   const { user, loading, recoveryMode } = useAuth();
   const [screen, setScreen] = useState<Screen>(initialScreen);
   const publicSlug = publicGallerySlug();
-  const landingRoute = window.location.pathname === '/landing';
+  const landingRoute = window.location.pathname === '/landing' || window.location.pathname === '/support';
+  const contactRequested = window.location.pathname === '/support' || new URLSearchParams(window.location.search).has('contact');
   const redirectTarget = productionRedirectTarget(publicSlug);
   const legalPage = legalPageKind();
 
@@ -48,7 +49,7 @@ function AppInner() {
 
   if (legalPage) return <LegalPage kind={legalPage} />;
 
-  if (isMarketingHost() && !['/', '/landing'].includes(window.location.pathname)) return <NotFoundPage />;
+  if (isMarketingHost() && !['/', '/landing', '/support'].includes(window.location.pathname)) return <NotFoundPage />;
 
   if (loading) {
     return (
@@ -66,6 +67,7 @@ function AppInner() {
   if (landingRoute && screen === 'landing') {
     return (
       <Landing
+        initialContactOpen={contactRequested}
         onChoosePlan={(sku) => openAuth('signup', setScreen, sku)}
         onGetStarted={() => openAuth('signup', setScreen)}
         onSignIn={() => openAuth('signin', setScreen)}
@@ -77,6 +79,7 @@ function AppInner() {
   if (isMarketingHost()) {
     return (
       <Landing
+        initialContactOpen={contactRequested}
         onChoosePlan={(sku) => openAuth('signup', setScreen, sku)}
         onGetStarted={() => openAuth('signup', setScreen)}
         onSignIn={() => openAuth('signin', setScreen)}
@@ -102,6 +105,7 @@ function AppInner() {
   // Landing page
   return (
     <Landing
+      initialContactOpen={contactRequested}
       onChoosePlan={(sku) => openAuth('signup', setScreen, sku)}
       onGetStarted={() => openAuth('signup', setScreen)}
       onSignIn={() => openAuth('signin', setScreen)}
@@ -112,11 +116,11 @@ function AppInner() {
 
 function legalPageKind(): LegalPageKind | null {
   const value = window.location.pathname.replace(/^\/+|\/+$/g, '');
-  return value === 'privacy' || value === 'terms' || value === 'refunds' || value === 'support' ? value : null;
+  return value === 'privacy' || value === 'terms' || value === 'refunds' ? value : null;
 }
 
 function initialScreen(): Screen {
-  if (window.location.pathname === '/landing') return 'landing';
+  if (window.location.pathname === '/landing' || window.location.pathname === '/support') return 'landing';
   if (window.location.pathname === '/auth') return 'auth';
   if (window.location.search.includes('auth=true')) return 'auth';
   return 'landing';
@@ -156,11 +160,13 @@ function productionRedirectTarget(publicSlug: string) {
   const galleryPath = `${pathname}${search}`;
 
   if (hostname === 'deliver.lanterna.video') {
-    return publicSlug ? '' : MARKETING_ORIGIN;
+    if (publicSlug) return '';
+    return pathname === '/support' ? `${MARKETING_ORIGIN}/?contact=true` : MARKETING_ORIGIN;
   }
 
   if (hostname === 'app.lanterna.video') {
     if (publicSlug) return `${DELIVERY_ORIGIN}${galleryPath}`;
+    if (pathname === '/support') return `${MARKETING_ORIGIN}/?contact=true`;
     if (pathname === '/landing') return MARKETING_ORIGIN;
     return '';
   }

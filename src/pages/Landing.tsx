@@ -6,10 +6,12 @@ import {
   Play,
 } from 'lucide-react';
 import { useState } from 'react';
+import { ContactModal } from '../components/ContactModal';
 import { LanternLogo } from '../components/LanternLogo';
 import { BLOCK_PRODUCTS, formatAllowance, SUBSCRIPTION_TIERS, WELCOME_ALLOWANCE_GB } from '../shared/billingCatalog.js';
 
 type Props = {
+  initialContactOpen?: boolean;
   onGetStarted: () => void;
   onChoosePlan: (sku: string) => void;
   onSignIn: () => void;
@@ -115,9 +117,10 @@ const storagePlans: Plan[] = BLOCK_PRODUCTS.map((block) => ({
   unit: ' once',
 }));
 
-export function Landing({ onChoosePlan, onGetStarted, onSignIn, onTryDemo }: Props) {
+export function Landing({ initialContactOpen = false, onChoosePlan, onGetStarted, onSignIn, onTryDemo }: Props) {
   const [pricingTab, setPricingTab] = useState<PricingTab>('sub');
   const [billingCadence, setBillingCadence] = useState<BillingCadence>('monthly');
+  const [contactOpen, setContactOpen] = useState(initialContactOpen);
   const subscription = pricingTab === 'sub';
   const plans = subscription ? subscriptionPlans(billingCadence) : storagePlans;
 
@@ -275,9 +278,15 @@ export function Landing({ onChoosePlan, onGetStarted, onSignIn, onTryDemo }: Pro
           <span>LANTERNA</span>
         </a>
         <p>Wedding films, delivered with light.</p>
-        <nav aria-label="Footer navigation"><a href="#gallery">Galleries</a><a href="#pricing">Pricing</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/refunds">Refunds</a><a href="/support">Support</a></nav>
+        <nav aria-label="Footer navigation"><a href="#gallery">Galleries</a><a href="#pricing">Pricing</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/refunds">Refunds</a><button onClick={() => setContactOpen(true)} type="button">Contact</button></nav>
         <small>© 2026 LANTERNA</small>
       </footer>
+      {contactOpen && <ContactModal onClose={() => {
+        setContactOpen(false);
+        if (window.location.pathname === '/support' || new URLSearchParams(window.location.search).has('contact')) {
+          window.history.replaceState({}, '', '/');
+        }
+      }} />}
     </div>
   );
 }

@@ -2028,6 +2028,46 @@ async function publicRateLimitKey(request, value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+export async function contactSupport(request, env) {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 16_000) return errorJson('Message is too long.', 413);
+  const body = await readJson(request);
+  if (String(body.website || '').trim()) return json({ ok: true });
+
+  const name = String(body.name || '').trim().slice(0, 80);
+  const email = String(body.email || '').trim().toLowerCase().slice(0, 160);
+  const subject = String(body.subject || 'General question').replace(/[\r\n]+/g, ' ').trim().slice(0, 120) || 'General question';
+  const message = String(body.message || '').trim().slice(0, 4000);
+  if (name.length < 2) return errorJson('Add your name.', 422);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return errorJson('Add a valid email address.', 422);
+  if (message.length < 10) return errorJson('Add a little more detail so we can help.', 422);
+
+  const allowed = await supabaseRest(env, 'rpc/consume_public_rate_limit', {
+    body: JSON.stringify({
+      p_key_hash: await publicRateLimitKey(request, email),
+      p_limit: 5,
+      p_scope: 'contact_form',
+      p_window_seconds: 3600,
+    }),
+    method: 'POST',
+  });
+  if (!allowed) return errorJson('Too many messages were sent. Email us directly or try again later.', 429);
+
+  try {
+    await sendTransactionalEmail(env, {
+      replyTo: email,
+      subject: `LANTERNA contact: ${subject}`,
+      text: `New LANTERNA website message\n\nName: ${name}\nEmail: ${email}\nSubject: ${subject}\n\nMessage:\n${message}`,
+      to: env.CONTACT_EMAIL || env.EMAIL_REPLY_TO || 'team@hellobower.com',
+    });
+  } catch (error) {
+    console.error('Contact form email failed.', error);
+    return errorJson('Your message could not be sent. Email us directly instead.', 502);
+  }
+
+  return json({ ok: true });
+}
+
 async function publicGalleryUnlock(request, env, slug) {
   const gallery = await publicGalleryBySlug(env, slug);
   if (!gallery) return errorJson('Gallery not found.', 404);
@@ -2152,6 +2192,7 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'GET' && path === 'storage/status') return await storageStatus(request, env);
     if (request.method === 'POST' && path === 'account/delete') return await deleteAccount(request, env);
     if (request.method === 'POST' && path === 'delivery/record') return await deliveryRecord(request, env);
+    if (request.method === 'POST' && path === 'contact') return await contactSupport(request, env);
     if (request.method === 'GET' && path === 'billing/status') return await platformBillingStatus(request, env);
     if (request.method === 'POST' && path === 'billing/checkout') return await createPlatformBillingCheckout(request, env);
     if (request.method === 'POST' && path === 'billing/portal') return await createPlatformBillingPortal(request, env);
