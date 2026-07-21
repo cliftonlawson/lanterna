@@ -1,8 +1,9 @@
-import { billingProduct } from '../shared/billingCatalog.js';
+import { BILLING_PRODUCTS, billingProduct } from '../shared/billingCatalog.js';
 import { errorJson, json, readJson, requireEnv } from './http.js';
 import { accountForUser, currentUser, supabaseRest } from './supabaseRest.js';
 
 const STRIPE_API_BASE = 'https://api.stripe.com/v1';
+const SUBSCRIPTION_CATALOG_KEY = 'lanterna_subscription_v1';
 
 function stripeSecretKey(env) {
   return env.STRIPE_SECRET_KEY;
@@ -91,6 +92,98 @@ function stripeProductName(product) {
   return `${product.allowanceGb} GB block`;
 }
 
+function subscriptionProducts() {
+  return Object.values(BILLING_PRODUCTS).filter((product) => product.kind === 'subscription');
+}
+
+function subscriptionProductForRow(subscription) {
+  return subscriptionProducts().find((product) => (
+    product.plan === subscription?.plan
+    && product.billingInterval === subscription?.billing_interval
+  )) || null;
+}
+
+async function ensureSubscriptionCatalog(env) {
+  const listedProducts = await stripeGet(env, '/products?active=true&limit=100');
+  let catalogProduct = listedProducts?.data?.find((product) => product.metadata?.lanterna_catalog === SUBSCRIPTION_CATALOG_KEY);
+  if (!catalogProduct) {
+    catalogProduct = await stripeRequest(env, '/products', {
+      description: 'Wedding-film delivery subscription with an annual upload allowance and white-label galleries.',
+      'metadata[lanterna_catalog]': SUBSCRIPTION_CATALOG_KEY,
+      name: 'LANTERNA subscription',
+    }, SUBSCRIPTION_CATALOG_KEY);
+  }
+
+  const listedPrices = await stripeGet(env, `/prices?active=true&limit=100&product=${encodeURIComponent(catalogProduct.id)}&type=recurring`);
+  const prices = {};
+  for (const product of subscriptionProducts()) {
+    let price = listedPrices?.data?.find((candidate) => (
+      candidate.metadata?.lanterna_sku === product.sku
+      && Number(candidate.unit_amount) === product.amountCents
+      && candidate.recurring?.interval === product.billingInterval
+    ));
+    if (!price) {
+      price = await stripeRequest(env, '/prices', {
+        currency: 'usd',
+        'metadata[allowance_gb]': product.allowanceGb,
+        'metadata[billing_interval]': product.billingInterval,
+        'metadata[lanterna_sku]': product.sku,
+        'metadata[plan]': product.plan,
+        nickname: product.name,
+        product: catalogProduct.id,
+        'recurring[interval]': product.billingInterval,
+        unit_amount: product.amountCents,
+      }, `${SUBSCRIPTION_CATALOG_KEY}-${product.sku}`);
+    }
+    prices[product.sku] = price;
+  }
+  return { prices, product: catalogProduct };
+}
+
+async function ensureBillingPortalConfiguration(env, catalog) {
+  const listed = await stripeGet(env, '/billing_portal/configurations?active=true&limit=100');
+  const existing = listed?.data?.find((configuration) => configuration.metadata?.lanterna_catalog === SUBSCRIPTION_CATALOG_KEY);
+  const params = {
+    active: true,
+    'business_profile[headline]': 'Manage your LANTERNA plan and billing.',
+    'business_profile[privacy_policy_url]': 'https://lanterna.video/privacy',
+    'business_profile[terms_of_service_url]': 'https://lanterna.video/terms',
+    default_return_url: `${appBaseUrl(env)}/`,
+    'features[customer_update][allowed_updates][0]': 'address',
+    'features[customer_update][allowed_updates][1]': 'email',
+    'features[customer_update][allowed_updates][2]': 'name',
+    'features[customer_update][enabled]': true,
+    'features[invoice_history][enabled]': true,
+    'features[payment_method_update][enabled]': true,
+    'features[subscription_cancel][cancellation_reason][enabled]': true,
+    'features[subscription_cancel][cancellation_reason][options][0]': 'too_expensive',
+    'features[subscription_cancel][cancellation_reason][options][1]': 'unused',
+    'features[subscription_cancel][cancellation_reason][options][2]': 'missing_features',
+    'features[subscription_cancel][cancellation_reason][options][3]': 'other',
+    'features[subscription_cancel][enabled]': true,
+    'features[subscription_cancel][mode]': 'at_period_end',
+    'features[subscription_cancel][proration_behavior]': 'none',
+    'features[subscription_update][billing_cycle_anchor]': 'unchanged',
+    'features[subscription_update][default_allowed_updates][0]': 'price',
+    'features[subscription_update][default_allowed_updates][1]': 'promotion_code',
+    'features[subscription_update][enabled]': true,
+    'features[subscription_update][proration_behavior]': 'always_invoice',
+    'features[subscription_update][products][0][product]': catalog.product.id,
+    'features[subscription_update][schedule_at_period_end][conditions][0][type]': 'decreasing_item_amount',
+    'features[subscription_update][schedule_at_period_end][conditions][1][type]': 'shortening_interval',
+    'metadata[lanterna_catalog]': SUBSCRIPTION_CATALOG_KEY,
+  };
+  subscriptionProducts().forEach((product, index) => {
+    params[`features[subscription_update][products][0][prices][${index}]`] = catalog.prices[product.sku].id;
+  });
+
+  if (existing) return stripeRequest(env, `/billing_portal/configurations/${encodeURIComponent(existing.id)}`, params);
+  return stripeRequest(env, '/billing_portal/configurations', {
+    ...params,
+    name: 'LANTERNA subscription management',
+  }, `${SUBSCRIPTION_CATALOG_KEY}-portal`);
+}
+
 async function currentBillingRows(env, accountId) {
   await supabaseRest(env, 'rpc/refresh_account_billing_state', {
     body: JSON.stringify({ p_account_id: accountId }),
@@ -100,7 +193,7 @@ async function currentBillingRows(env, accountId) {
   const [branding, entitlements, subscriptions, usage] = await Promise.all([
     supabaseRest(env, `vendor_branding?select=white_label_until&account_id=eq.${encodeURIComponent(accountId)}&limit=1`, { headers: { accept: 'application/json' } }),
     supabaseRest(env, `entitlements?select=source,gb_granted,period_start,period_end,sku,status&account_id=eq.${encodeURIComponent(accountId)}&status=eq.active&period_end=gt.${encodeURIComponent(new Date().toISOString())}&order=period_end.desc`, { headers: { accept: 'application/json' } }),
-    supabaseRest(env, `subscriptions?select=plan,status,seats,current_period_end,billing_interval,allowance_period_start,allowance_period_end,cancel_at_period_end&account_id=eq.${encodeURIComponent(accountId)}&status=in.(active,past_due)&order=created_at.desc&limit=1`, { headers: { accept: 'application/json' } }),
+    supabaseRest(env, `subscriptions?select=plan,status,seats,current_period_end,billing_interval,allowance_period_start,allowance_period_end,cancel_at_period_end,stripe_subscription_id&account_id=eq.${encodeURIComponent(accountId)}&status=in.(active,past_due)&order=created_at.desc&limit=1`, { headers: { accept: 'application/json' } }),
     supabaseRest(env, `account_usage?select=allowance_used_gb,allowance_total_gb,allowance_period_start,allowance_period_end&account_id=eq.${encodeURIComponent(accountId)}&limit=1`, { headers: { accept: 'application/json' } }),
   ]);
 
@@ -161,6 +254,7 @@ export async function createPlatformBillingCheckout(request, env) {
 
   const customerId = await stripeCustomerForAccount(env, accountId, user);
   const recurring = product.kind === 'subscription';
+  const catalog = recurring ? await ensureSubscriptionCatalog(env) : null;
   const metadata = {
     account_id: accountId,
     allowance_gb: product.allowanceGb ?? 0,
@@ -181,15 +275,18 @@ export async function createPlatformBillingCheckout(request, env) {
     success_url: `${appBaseUrl(env)}/?billing=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${appBaseUrl(env)}/?billing=cancelled`,
     submit_type: recurring ? 'subscribe' : 'pay',
-    'line_items[0][price_data][currency]': 'usd',
-    'line_items[0][price_data][product_data][name]': stripeProductName(product),
-    'line_items[0][price_data][unit_amount]': product.amountCents,
     'line_items[0][quantity]': 1,
+    ...(recurring ? {
+      'line_items[0][price]': catalog.prices[product.sku].id,
+    } : {
+      'line_items[0][price_data][currency]': 'usd',
+      'line_items[0][price_data][product_data][name]': stripeProductName(product),
+      'line_items[0][price_data][unit_amount]': product.amountCents,
+    }),
     ...Object.fromEntries(Object.entries(metadata).map(([key, value]) => [`metadata[${key}]`, value])),
   };
   if (recurring) {
     params.allow_promotion_codes = true;
-    params['line_items[0][price_data][recurring][interval]'] = product.billingInterval;
     for (const [key, value] of Object.entries(metadata)) params[`subscription_data[metadata][${key}]`] = value;
   } else {
     for (const [key, value] of Object.entries(metadata)) params[`payment_intent_data[metadata][${key}]`] = value;
@@ -219,10 +316,41 @@ export async function createPlatformBillingCheckout(request, env) {
 
 export async function createPlatformBillingPortal(request, env) {
   const { accountId } = await billingAccountContext(request, env);
-  const accounts = await supabaseRest(env, `accounts?select=stripe_customer_id&id=eq.${encodeURIComponent(accountId)}&limit=1`, { headers: { accept: 'application/json' } });
+  const [accounts, rows] = await Promise.all([
+    supabaseRest(env, `accounts?select=stripe_customer_id&id=eq.${encodeURIComponent(accountId)}&limit=1`, { headers: { accept: 'application/json' } }),
+    currentBillingRows(env, accountId),
+  ]);
   const customerId = accounts?.[0]?.stripe_customer_id;
   if (!customerId) return errorJson('No billing account is available yet.', 409);
+  let configuration;
+  if (rows.subscription?.stripe_subscription_id) {
+    const product = subscriptionProductForRow(rows.subscription);
+    if (!product) return errorJson('Your current plan could not be matched to the billing catalog.', 409);
+    const catalog = await ensureSubscriptionCatalog(env);
+    const subscription = await stripeGet(env, `/subscriptions/${encodeURIComponent(rows.subscription.stripe_subscription_id)}`);
+    const item = subscription?.items?.data?.[0];
+    if (!item?.id) return errorJson('Your current plan could not be opened in billing.', 409);
+    const catalogPrice = catalog.prices[product.sku];
+    if (item.price?.id !== catalogPrice.id) {
+      await stripeRequest(env, `/subscriptions/${encodeURIComponent(subscription.id)}`, {
+        'items[0][id]': item.id,
+        'items[0][price]': catalogPrice.id,
+        'items[0][quantity]': 1,
+        'metadata[account_id]': accountId,
+        'metadata[allowance_gb]': product.allowanceGb,
+        'metadata[billing_interval]': product.billingInterval,
+        'metadata[billing_kind]': product.kind,
+        'metadata[lanterna_billing]': 'platform',
+        'metadata[plan]': product.plan,
+        'metadata[seats]': product.seats,
+        'metadata[sku]': product.sku,
+        proration_behavior: 'none',
+      }, `${SUBSCRIPTION_CATALOG_KEY}-migrate-${subscription.id}-${product.sku}`);
+    }
+    configuration = await ensureBillingPortalConfiguration(env, catalog);
+  }
   const session = await stripeRequest(env, '/billing_portal/sessions', {
+    configuration: configuration?.id,
     customer: customerId,
     return_url: `${appBaseUrl(env)}/`,
   });
@@ -248,9 +376,9 @@ function subscriptionPeriod(subscription) {
 }
 
 async function fulfillSubscription(env, accountId, checkoutSessionId, stripeCustomerId, subscription) {
-  const product = billingProduct(subscription?.metadata?.sku);
-  if (!product || product.kind !== 'subscription') throw new Error('Stripe subscription metadata does not match the LANTERNA catalog.');
   const item = subscription?.items?.data?.[0];
+  const product = billingProduct(item?.price?.metadata?.lanterna_sku || subscription?.metadata?.sku);
+  if (!product || product.kind !== 'subscription') throw new Error('Stripe subscription metadata does not match the LANTERNA catalog.');
   if (Number(item?.price?.unit_amount) !== product.amountCents || item?.price?.recurring?.interval !== product.billingInterval) {
     throw new Error('Stripe subscription price does not match the LANTERNA catalog.');
   }
