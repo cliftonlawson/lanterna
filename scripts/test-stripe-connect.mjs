@@ -8,6 +8,7 @@ import {
 
 const env = {
   FILM_SALES_ENABLED: 'true',
+  STRIPE_SANDBOX_WRITES_ENABLED: 'true',
   STRIPE_CONNECT_WEBHOOK_SECRET: 'whsec_connect_test',
   STRIPE_SECRET_KEY: 'sk_test_lanterna',
   SUPABASE_ANON_KEY: 'anon_test',
@@ -127,6 +128,13 @@ try {
   );
   assert.equal(disabledOnboarding.status, 503);
   assert.equal((await disabledOnboarding.json()).details.code, 'film_sales_unavailable');
+
+  const sandboxOnboarding = await startStripeConnectOnboarding(
+    authenticatedRequest('https://app.lanterna.video/api/connect/onboarding'),
+    { ...env, STRIPE_SANDBOX_WRITES_ENABLED: 'false' },
+  );
+  assert.equal(sandboxOnboarding.status, 503);
+  assert.equal((await sandboxOnboarding.json()).details.code, 'stripe_live_mode_required');
 
   const onboarding = await startStripeConnectOnboarding(authenticatedRequest('https://app.lanterna.video/api/connect/onboarding'), env);
   assert.equal(onboarding.status, 200);

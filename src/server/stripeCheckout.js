@@ -5,6 +5,7 @@ import { createR2PresignedGetUrl } from './r2Signing.js';
 import { accountForUser, currentUser, publicGalleryBySlug, supabaseRest } from './supabaseRest.js';
 import { resolveVideoDownloadPermission } from './downloadPermissions.js';
 import { handlePlatformBillingStripeEvent } from './platformBilling.js';
+import { stripeMutationsEnabled } from './stripeMode.js';
 import { sendTransactionalEmail } from './transactionalEmail.js';
 
 const STRIPE_API_BASE = 'https://api.stripe.com/v1';
@@ -182,7 +183,7 @@ async function filmSalesSummary(env, accountId) {
 
 export async function stripeConnectStatus(request, env) {
   const { accountId } = await accountContext(request, env);
-  if (!filmSalesEnabled(env)) return json({
+  if (!filmSalesEnabled(env) || !stripeMutationsEnabled(env)) return json({
     available: false,
     chargesEnabled: false,
     detailsSubmitted: false,
@@ -220,6 +221,9 @@ export async function stripeConnectStatus(request, env) {
 export async function startStripeConnectOnboarding(request, env) {
   const { accountId, user } = await accountContext(request, env, { ownerOnly: true });
   if (!filmSalesEnabled(env)) return filmSalesUnavailable();
+  if (!stripeMutationsEnabled(env)) {
+    return errorJson('Film payouts are not available until Stripe live mode is configured.', 503, { code: 'stripe_live_mode_required' });
+  }
   let saved = await connectedAccountForLanternaAccount(env, accountId);
 
   if (!saved) {
@@ -316,6 +320,9 @@ async function createPendingPurchase(env, { amountCents, gallery, purchaseId, se
 
 export async function createPaidUnlockCheckout(request, env, slug) {
   if (!filmSalesEnabled(env)) return filmSalesUnavailable();
+  if (!stripeMutationsEnabled(env)) {
+    return errorJson('Film purchases are not available until Stripe live mode is configured.', 503, { code: 'stripe_live_mode_required' });
+  }
   const gallery = await publicGalleryBySlug(env, slug);
   if (!gallery) return errorJson('Gallery not found.', 404);
   const accessError = publicGalleryAccessError(gallery);
@@ -529,6 +536,7 @@ async function markPurchaseRefunded(env, charge, stripeAccountId = null) {
 }
 
 export async function stripeWebhook(request, env) {
+  if (!stripeMutationsEnabled(env)) return json({ ignored: true, ok: true });
   let event;
   try {
     requireEnv({ ...env, STRIPE_WEBHOOK_SECRET: stripeWebhookSecret(env) }, ['STRIPE_WEBHOOK_SECRET']);
@@ -555,6 +563,7 @@ export async function stripeWebhook(request, env) {
 }
 
 export async function stripeConnectWebhook(request, env) {
+  if (!stripeMutationsEnabled(env)) return json({ ignored: true, ok: true });
   let event;
   try {
     requireEnv(

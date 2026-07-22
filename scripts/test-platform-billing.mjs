@@ -8,6 +8,7 @@ let allowanceTotalGb = 0;
 let stripeCustomerId = null;
 const env = {
   APP_URL: 'https://app.lanterna.video',
+  STRIPE_SANDBOX_WRITES_ENABLED: 'true',
   STRIPE_SECRET_KEY: 'sk_test_platform',
   SUPABASE_ANON_KEY: 'anon',
   SUPABASE_SERVICE_ROLE_KEY: 'service',
@@ -96,6 +97,13 @@ assert.equal(welcomePayload.canBuyWhiteLabel, false);
 assert.equal(welcomePayload.whiteLabel, false);
 activeEntitlements = [];
 allowanceTotalGb = 0;
+
+const sandboxBlocked = await createPlatformBillingCheckout(
+  authRequest('/api/billing/checkout', { sku: 'starter_monthly' }),
+  { ...env, STRIPE_SANDBOX_WRITES_ENABLED: 'false' },
+);
+assert.equal(sandboxBlocked.status, 503);
+assert.equal((await sandboxBlocked.json()).details.code, 'stripe_live_mode_required');
 
 const checkout = await createPlatformBillingCheckout(authRequest('/api/billing/checkout', { sku: 'starter_monthly' }), env);
 assert.equal(checkout.status, 200);

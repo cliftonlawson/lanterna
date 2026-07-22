@@ -1,5 +1,6 @@
 import { BILLING_PRODUCTS, billingProduct } from '../shared/billingCatalog.js';
 import { errorJson, json, readJson, requireEnv } from './http.js';
+import { stripeMutationsEnabled } from './stripeMode.js';
 import { accountForUser, currentUser, supabaseRest } from './supabaseRest.js';
 
 const STRIPE_API_BASE = 'https://api.stripe.com/v1';
@@ -237,6 +238,9 @@ export async function platformBillingStatus(request, env) {
 }
 
 export async function createPlatformBillingCheckout(request, env) {
+  if (!stripeMutationsEnabled(env)) {
+    return errorJson('Payments are not available until Stripe live mode is configured.', 503, { code: 'stripe_live_mode_required' });
+  }
   const { accountId, user } = await billingAccountContext(request, env);
   const body = await readJson(request);
   const product = billingProduct(body.sku);
@@ -315,6 +319,9 @@ export async function createPlatformBillingCheckout(request, env) {
 }
 
 export async function createPlatformBillingPortal(request, env) {
+  if (!stripeMutationsEnabled(env)) {
+    return errorJson('Billing management is not available until Stripe live mode is configured.', 503, { code: 'stripe_live_mode_required' });
+  }
   const { accountId } = await billingAccountContext(request, env);
   const [accounts, rows] = await Promise.all([
     supabaseRest(env, `accounts?select=stripe_customer_id&id=eq.${encodeURIComponent(accountId)}&limit=1`, { headers: { accept: 'application/json' } }),
