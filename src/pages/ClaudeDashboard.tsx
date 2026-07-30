@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AccountScreen } from './lanterna-dashboard/AccountScreen';
 import { AllGalleriesScreen } from './lanterna-dashboard/AllGalleriesScreen';
 import {
+  cancelUploadJobRemote,
   completeBackgroundUpload,
   completeMusicUpload,
   completeUpload,
@@ -86,6 +87,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
   const galleriesRef = useRef<DashboardGallery[]>([]);
   const createGalleryRequestRef = useRef(false);
   const uploadAbortControllersRef = useRef(new Map<string, AbortController>());
+  const dismissedUploadJobIdsRef = useRef(new Set<string>());
   const pendingCheckoutStartedRef = useRef(false);
 
   const activeGallery = galleries.find((gallery) => gallery.id === activeId) ?? galleries[0];
@@ -159,7 +161,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
     });
     void loadUploadJobs().then((loadedJobs) => {
       if (!mounted) return;
-      setUploadJobs(loadedJobs);
+      setUploadJobs(withoutDismissedUploadJobs(loadedJobs, dismissedUploadJobIdsRef.current));
     });
 
     return () => {
@@ -210,13 +212,14 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
 
         setGalleries(refreshedGalleries);
         setActiveId(refreshedActive.id);
-        setUploadJobs(refreshedJobs);
+        const visibleRefreshedJobs = withoutDismissedUploadJobs(refreshedJobs, dismissedUploadJobIdsRef.current);
+        setUploadJobs(visibleRefreshedJobs);
 
         const completedVideoIds = new Set(result.processedVideoIds ?? []);
         const erroredVideoIds = new Set(result.erroredVideoIds ?? []);
         if (completedVideoIds.size > 0 || erroredVideoIds.size > 0) {
           setUploadJobs((current) => {
-            const byId = new Map(refreshedJobs.map((job) => [job.id, job]));
+            const byId = new Map(visibleRefreshedJobs.map((job) => [job.id, job]));
             const next = current.map((job) => {
               const refreshed = byId.get(job.id) ?? job;
               if (!galleryVideoJobNeedsProcessing(refreshed, galleryId) || !refreshed.targetId) return refreshed;
@@ -328,7 +331,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
       loadUploadJobs(),
     ]);
     setGalleries(refreshedGalleries);
-    setUploadJobs(refreshedJobs);
+    setUploadJobs(withoutDismissedUploadJobs(refreshedJobs, dismissedUploadJobIdsRef.current));
   };
 
   const archiveGallery = async (id: string) => {
@@ -600,7 +603,10 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
     showToast(skipped > 0 ? `Uploading ${files.length}; skipped ${skipped}` : `Uploading ${files.length} ${files.length === 1 ? 'file' : 'files'}`);
 
     const setJob = (jobId: string, patch: Partial<UploadJob>, persist = true) => {
-      nextJobs = nextJobs.map((job) => job.id === jobId ? { ...job, ...patch } : job);
+      nextJobs = withoutDismissedUploadJobs(
+        nextJobs.map((job) => job.id === jobId ? { ...job, ...patch } : job),
+        dismissedUploadJobIdsRef.current,
+      );
       setUploadJobs(nextJobs);
       if (persist) void saveUploadJobs(nextJobs);
     };
@@ -672,8 +678,12 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
               loadDashboardGalleries(),
               loadUploadJobs(),
             ]);
-            const refreshedById = new Map(refreshedJobs.map((job) => [job.id, job]));
-            nextJobs = nextJobs.map((job) => refreshedById.get(job.id) ?? job);
+            const visibleRefreshedJobs = withoutDismissedUploadJobs(refreshedJobs, dismissedUploadJobIdsRef.current);
+            const refreshedById = new Map(visibleRefreshedJobs.map((job) => [job.id, job]));
+            nextJobs = withoutDismissedUploadJobs(
+              nextJobs.map((job) => refreshedById.get(job.id) ?? job),
+              dismissedUploadJobIdsRef.current,
+            );
             setGalleries(refreshedGalleries);
             setUploadJobs(nextJobs);
             showToast(userMessage(error, 'Upload complete, but the film still needs preparation. Try again.'));
@@ -682,7 +692,15 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
         }
 
         if (slot.r2.method !== 'PUT') throw new Error('Photo upload could not start. Try again.');
-        await putFileToR2(file, slot.r2, (bytesUploaded) => setJob(jobId, { bytesUploaded, status: 'uploading' }));
+        const controller = new AbortController();
+        uploadAbortControllersRef.current.set(jobId, controller);
+        await putFileToR2(
+          file,
+          slot.r2,
+          (bytesUploaded) => setJob(jobId, { bytesUploaded, status: 'uploading' }),
+          controller.signal,
+        );
+        uploadAbortControllersRef.current.delete(jobId);
         const completed = await completeUpload({
           galleryId: activeGallery.id,
           targetId: target.id,
@@ -787,7 +805,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
         loadUploadJobs(),
       ]);
       setGalleries(refreshedGalleries);
-      setUploadJobs(refreshedJobs);
+      setUploadJobs(withoutDismissedUploadJobs(refreshedJobs, dismissedUploadJobIdsRef.current));
       showToast(userMessage(error, 'Upload could not resume. Try again.'));
     }
   };
@@ -812,7 +830,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
         loadUploadJobs(),
       ]);
       setGalleries(refreshedGalleries);
-      setUploadJobs(refreshedJobs);
+      setUploadJobs(withoutDismissedUploadJobs(refreshedJobs, dismissedUploadJobIdsRef.current));
       showToast(userMessage(error, 'Film preparation could not restart. Try again.'));
     }
   };
@@ -929,6 +947,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
 
   const removeUploadJob = (jobId: string) => {
     const job = uploadJobs.find((item) => item.id === jobId);
+    dismissedUploadJobIdsRef.current.add(jobId);
     const nextJobs = uploadJobs.filter((item) => item.id !== jobId);
     setUploadJobs(nextJobs);
     void saveUploadJobs(nextJobs);
@@ -939,6 +958,42 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
     const updatedGalleries = galleries.map((gallery) => gallery.id === job.galleryId ? removePendingMediaFromGallery(gallery, job.targetId, job.targetType) : gallery);
     setGalleries(updatedGalleries);
     void saveDashboardGalleries(updatedGalleries, 'upload');
+  };
+
+  const cancelActiveUploadJob = async (jobId: string) => {
+    const job = uploadJobs.find((item) => item.id === jobId);
+    if (!job || job.status === 'complete') return;
+
+    dismissedUploadJobIdsRef.current.add(job.id);
+    uploadAbortControllersRef.current.get(job.id)?.abort();
+    uploadAbortControllersRef.current.delete(job.id);
+    const nextJobs = uploadJobs.filter((item) => item.id !== job.id);
+    setUploadJobs(nextJobs);
+    void saveUploadJobs(nextJobs);
+
+    try {
+      await cancelUploadJobRemote(job.id);
+      if (!job.isReplacement) {
+        const updatedGalleries = galleriesRef.current.map((gallery) => gallery.id === job.galleryId
+          ? removePendingMediaFromGallery(gallery, job.targetId, job.targetType)
+          : gallery);
+        galleriesRef.current = updatedGalleries;
+        setGalleries(updatedGalleries);
+        await saveDashboardGalleries(updatedGalleries, 'upload');
+      }
+      setWorkspace(await loadWorkspaceAccount());
+      showToast('Upload cancelled');
+    } catch (error) {
+      dismissedUploadJobIdsRef.current.delete(job.id);
+      const [refreshedGalleries, refreshedJobs] = await Promise.all([
+        loadDashboardGalleries(),
+        loadUploadJobs(),
+      ]);
+      galleriesRef.current = refreshedGalleries;
+      setGalleries(refreshedGalleries);
+      setUploadJobs(withoutDismissedUploadJobs(refreshedJobs, dismissedUploadJobIdsRef.current));
+      showToast(userMessage(error, 'Upload could not be cancelled. Try again.'));
+    }
   };
 
   return (
@@ -1001,6 +1056,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
           uploadJobs={uploadJobs}
           workspace={workspace}
           onAddFiles={addFilesToGallery}
+          onCancelUploadJob={(jobId) => void cancelActiveUploadJob(jobId)}
           onOpenGallery={() => openGallery(activeGallery.id)}
           onOpenVideoDetail={(videoId) => {
             openGallery(activeGallery.id, 'videos');
@@ -1079,6 +1135,10 @@ function galleryVideoJobNeedsProcessing(job: UploadJob, galleryId: string) {
     && job.targetType === 'video'
     && job.status === 'processing'
     && (!job.uploadPhase || job.uploadPhase === 'preparing_playback');
+}
+
+function withoutDismissedUploadJobs(jobs: UploadJob[], dismissedJobIds: Set<string>) {
+  return jobs.filter((job) => !dismissedJobIds.has(job.id));
 }
 
 function removePendingMediaFromGallery(gallery: DashboardGallery, targetId: string | null, targetType: 'video' | 'photo') {

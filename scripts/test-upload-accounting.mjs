@@ -84,6 +84,12 @@ const functionSource = (name, nextName) => apiSource.slice(
   apiSource.indexOf(`async function ${nextName}`),
 );
 assert.doesNotMatch(functionSource('uploadComplete', 'clearUploadJob'), /body\.bytes|body\.r2Key/);
+const cancelUploadSource = functionSource('cancelUploadJob', 'deleteGalleryMedia');
+assert.match(cancelUploadSource, /abortR2MultipartUpload/);
+assert.match(cancelUploadSource, /deleteR2Object/);
+assert.match(cancelUploadSource, /deleteStreamVideo/);
+assert.match(cancelUploadSource, /!job\.is_replacement/);
+assert.match(cancelUploadSource, /method: 'DELETE'/);
 assert.doesNotMatch(functionSource('backgroundComplete', 'musicSlot'), /body\.bytes|body\.r2Key/);
 assert.doesNotMatch(functionSource('posterComplete', 'posterCaptureFrame'), /body\.bytes|body\.r2Key/);
 
