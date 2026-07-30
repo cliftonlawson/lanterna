@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertCircle, Camera, DollarSign, Download, Loader2, Lock, Share2, Trash2, Upload, X } from 'lucide-react';
 import {
   capturePosterFrame,
@@ -85,6 +86,8 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
       : video?.processingStatus === 'uploading'
         ? 'Uploading replacement'
         : '';
+  const videoDurationSeconds = durationSecondsFromLabel(video?.duration);
+  const capturePortalTarget = document.querySelector<HTMLElement>('.lanterna-app') ?? document.body;
 
   useEffect(() => {
     if (demo) {
@@ -327,6 +330,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
         <p>{gallery.name} · Film {videoIndex + 1} of {Math.max(gallery.videoItems.length, 1)}</p>
         <div className={`drawer-hero ${pendingVideo ? 'is-processing' : ''}`}>
           <CustomVideoPlayer
+            durationSeconds={videoDurationSeconds}
             fallbackBackground={video?.gradient ?? gallery.gradient}
             posterUrl={posterUrl}
             streamUrl={streamUrl}
@@ -450,7 +454,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
           )}
         </section>
       </section>
-      {captureOpen && video && (
+      {captureOpen && video && createPortal((
         <div className="frame-capture-overlay" role="dialog" aria-label="Capture thumbnail frame" aria-modal="true">
           <div className="frame-capture-scrim" />
           <section className="frame-capture-stage">
@@ -463,6 +467,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
             </div>
             <CustomVideoPlayer
               className="frame-capture-player"
+              durationSeconds={videoDurationSeconds}
               fallbackBackground={video.gradient ?? gallery.gradient}
               onTimeChange={setCaptureSecond}
               posterUrl={posterUrl}
@@ -472,7 +477,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
             />
           </section>
         </div>
-      )}
+      ), capturePortalTarget)}
     </div>
   );
 }
@@ -482,6 +487,13 @@ function formatFrameTime(seconds: number) {
   const minutes = Math.floor(safeSeconds / 60);
   const remainingSeconds = safeSeconds - minutes * 60;
   return `${minutes}:${remainingSeconds.toFixed(1).padStart(4, '0')}`;
+}
+
+function durationSecondsFromLabel(duration: string | undefined) {
+  if (!duration) return 0;
+  const parts = duration.split(':').map(Number);
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) return 0;
+  return parts.reduce((seconds, part) => seconds * 60 + part, 0);
 }
 
 function latestReplacementJob(uploadJobs: UploadJob[], galleryId: string, videoId: string | undefined) {

@@ -120,6 +120,33 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
   }, [galleries]);
 
   useEffect(() => {
+    const currentState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    if (!currentState.lanternaDashboard) {
+      window.history.replaceState({
+        ...currentState,
+        lanternaDashboard: { view: 'galleries' },
+      }, '', window.location.pathname);
+    }
+
+    const restoreDashboardView = (event: PopStateEvent) => {
+      const state = event.state?.lanternaDashboard as {
+        activeGalleryId?: string;
+        studioTab?: StudioTab;
+        view?: View;
+      } | undefined;
+      if (!state?.view) return;
+      if (state.activeGalleryId) setActiveId(state.activeGalleryId);
+      if (state.studioTab) setStudioTab(state.studioTab);
+      setView(state.view);
+    };
+
+    window.addEventListener('popstate', restoreDashboardView);
+    return () => window.removeEventListener('popstate', restoreDashboardView);
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
     void loadDashboardGalleries().then((loadedGalleries) => {
       if (!mounted) return;
@@ -262,9 +289,32 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
   };
 
   const openGallery = (id: string, tab: StudioTab = 'videos') => {
+    const currentState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    window.history.replaceState({
+      ...currentState,
+      lanternaDashboard: { activeGalleryId: id, studioTab: tab, view: 'studio' },
+    }, '', '/');
     setActiveId(id);
     setStudioTab(tab);
     setView('studio');
+  };
+
+  const openUpload = (id: string) => {
+    const currentState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    window.history.replaceState({
+      ...currentState,
+      lanternaDashboard: { activeGalleryId: id, studioTab, view: 'studio' },
+    }, '', '/');
+    window.history.pushState({
+      ...currentState,
+      lanternaDashboard: { activeGalleryId: id, studioTab, view: 'upload' },
+    }, '', '/');
+    setActiveId(id);
+    setView('upload');
   };
 
   const openVideoDetail = (videoId: string) => {
@@ -404,9 +454,8 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
       };
 
       commitGalleries((prev) => [gallery, ...prev], 'create');
-      setActiveId(gallery.id);
       setNewOpen(false);
-      setView('upload');
+      openUpload(gallery.id);
       showToast(`Gallery "${name}" created`);
     } catch (error) {
       setCreateGalleryError(userMessage(error, 'Gallery could not be saved. Check your connection and try again.'));
@@ -937,7 +986,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
           onGalleryAccessChange={updateGalleryAccess}
           onBackgroundUpload={uploadBackgroundImage}
           onMusicUpload={uploadBackgroundMusic}
-          onOpenUpload={() => setView('upload')}
+          onOpenUpload={() => openUpload(activeGallery.id)}
           onSelectedPhotosChange={setSelectedPhotos}
           onSendDelivery={sendDelivery}
           onShowToast={showToast}

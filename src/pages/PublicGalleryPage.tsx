@@ -544,6 +544,7 @@ function PublicFilmPlayer({
       <section className="public-player-panel">
         <CustomVideoPlayer
           className="public-player-hero"
+          durationSeconds={durationSecondsFromLabel(film.duration)}
           fallbackBackground={film.gradient}
           posterUrl={posterUrl}
           onPlay={() => {
@@ -572,6 +573,13 @@ function PublicFilmPlayer({
       </section>
     </div>
   );
+}
+
+function durationSecondsFromLabel(duration: string | undefined) {
+  if (!duration) return 0;
+  const parts = duration.split(':').map(Number);
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) return 0;
+  return parts.reduce((seconds, part) => seconds * 60 + part, 0);
 }
 
 function publicGallerySessionId(slug: string) {
