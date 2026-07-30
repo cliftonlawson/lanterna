@@ -37,6 +37,7 @@ assert.match(contact, /aria-modal="true"/);
 assert.match(app, /window\.location\.pathname === '\/support'/);
 assert.match(headers, /Strict-Transport-Security/);
 assert.match(headers, /Content-Security-Policy/);
+assert.match(headers, /script-src 'self' https:\/\/embed\.cloudflarestream\.com https:\/\/static\.cloudflareinsights\.com/);
 assert.match(headers, /X-Content-Type-Options: nosniff/);
 assert.match(html, /https:\/\/lanterna\.video\/social\/lanterna-share\.png/);
 assert.match(html, /LANTERNA — Illuminate Every Film Delivery/);
