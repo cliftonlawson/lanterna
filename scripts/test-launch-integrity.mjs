@@ -85,6 +85,8 @@ assert.match(api, /path === 'upload\/cancel-job'/);
 assert.match(customVideoPlayer, /durationSeconds/);
 assert.match(customVideoPlayer, /finiteMediaTime\(player\.duration\)/);
 assert.match(customVideoPlayer, /onChange=\{\(event\) => seek\(event\.currentTarget\.value\)\}/);
+assert.match(customVideoPlayer, /active && \(fullscreen \|\| expanded\)/);
+assert.match(customVideoPlayer, /className="custom-video-fullscreen-exit"/);
 assert.match(videoDrawer, /createPortal/);
 assert.match(videoDrawer, /return createPortal\(\(/);
 assert.match(videoDrawer, /capturePortalTarget/);

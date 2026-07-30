@@ -305,6 +305,18 @@ export function CustomVideoPlayer({ className = '', durationSeconds = 0, fallbac
         />
       )}
 
+      {active && (fullscreen || expanded) && (
+        <button
+          aria-label="Exit fullscreen video"
+          className="custom-video-fullscreen-exit"
+          onClick={() => void toggleFullscreen()}
+          type="button"
+        >
+          <Minimize2 size={20} />
+          <span>Exit fullscreen</span>
+        </button>
+      )}
+
       {active && (
         <div className="custom-video-controls" aria-label={`${title} controls`}>
           <input
