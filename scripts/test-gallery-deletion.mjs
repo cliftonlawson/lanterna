@@ -21,7 +21,13 @@ assert.match(supabaseSource, /cover_photo_id,archived_at/);
 assert.match(deleteSource, /assertGalleryMembership/);
 assert.match(deleteSource, /if \(!gallery\.archived_at\)/);
 assert.match(deleteSource, /gallery_must_be_archived/);
-assert.match(deleteSource, /rpc\/request_gallery_soft_delete/);
+assert.match(deleteSource, /purgeGalleryResources/);
+assert.match(apiSource, /async function purgeGalleryResources/);
+assert.match(apiSource, /await deleteR2Object/);
+assert.match(apiSource, /await deleteStreamVideo/);
+assert.match(deleteSource, /galleries\?id=eq/);
+assert.match(deleteSource, /deleted_at: deletedAt/);
+assert.match(deleteSource, /method: 'PATCH'/);
 
 assert.match(screenSource, /gallery\.archived && \(/);
 assert.match(screenSource, /Delete permanently/);

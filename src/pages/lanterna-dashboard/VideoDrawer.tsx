@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertCircle, Camera, DollarSign, Download, Loader2, Lock, Share2, Trash2, Upload, X } from 'lucide-react';
 import {
   capturePosterFrame,
@@ -51,6 +52,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
   const [posterUploading, setPosterUploading] = useState(false);
   const [videoReplacing, setVideoReplacing] = useState(false);
   const [filmSalesReady, setFilmSalesReady] = useState<boolean | null>(null);
+  const [filmSalesAvailable, setFilmSalesAvailable] = useState<boolean | null>(null);
   const [replaceStage, setReplaceStage] = useState<'idle' | 'uploading_master' | 'master_secured' | 'preparing_playback'>('idle');
   const [replaceProgress, setReplaceProgress] = useState(0);
   const posterInputRef = useRef<HTMLInputElement | null>(null);
@@ -84,17 +86,26 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
       : video?.processingStatus === 'uploading'
         ? 'Uploading replacement'
         : '';
+  const videoDurationSeconds = durationSecondsFromLabel(video?.duration);
+  const capturePortalTarget = document.querySelector<HTMLElement>('.lanterna-app') ?? document.body;
 
   useEffect(() => {
     if (demo) {
-      setFilmSalesReady(true);
+      setFilmSalesAvailable(false);
+      setFilmSalesReady(false);
       return undefined;
     }
     let cancelled = false;
     void getConnectStatus().then((status) => {
-      if (!cancelled) setFilmSalesReady(status.state === 'active');
+      if (!cancelled) {
+        setFilmSalesAvailable(status.available === true);
+        setFilmSalesReady(status.available === true && status.state === 'active');
+      }
     }).catch(() => {
-      if (!cancelled) setFilmSalesReady(false);
+      if (!cancelled) {
+        setFilmSalesAvailable(false);
+        setFilmSalesReady(false);
+      }
     });
     return () => {
       cancelled = true;
@@ -171,6 +182,10 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
 
   const setPaidMode = (enabled: boolean) => {
     if (!video) return;
+    if (enabled && filmSalesAvailable === false) {
+      onShowToast('Paid film sales are temporarily unavailable');
+      return;
+    }
     if (enabled && filmSalesReady !== true) {
       onShowToast('Set up payouts in Account & billing before offering paid films');
       return;
@@ -315,6 +330,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
         <p>{gallery.name} · Film {videoIndex + 1} of {Math.max(gallery.videoItems.length, 1)}</p>
         <div className={`drawer-hero ${pendingVideo ? 'is-processing' : ''}`}>
           <CustomVideoPlayer
+            durationSeconds={videoDurationSeconds}
             fallbackBackground={video?.gradient ?? gallery.gradient}
             posterUrl={posterUrl}
             streamUrl={streamUrl}
@@ -386,11 +402,17 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
             <strong>Access & pricing</strong>
           </header>
           <p>Include this film in the gallery, or lock it as a paid bonus edit the couple can unlock.</p>
+          {filmSalesAvailable === false && (
+            <div className="paid-unavailable-banner">
+              <span>Unavailable</span>
+              <p>Paid unlocks are temporarily paused. Keep this film included to deliver it now.</p>
+            </div>
+          )}
           <div className="paid-segmented" role="group" aria-label="Film access pricing">
             <button className={!paidEnabled ? 'on' : ''} onClick={() => setPaidMode(false)}>Included</button>
-            <button className={paidEnabled ? 'on' : ''} disabled={filmSalesReady !== true && !paidEnabled} onClick={() => setPaidMode(true)}>Paid unlock</button>
+            <button className={paidEnabled ? 'on' : ''} disabled={filmSalesAvailable === false || (filmSalesReady !== true && !paidEnabled)} onClick={() => setPaidMode(true)}>Paid unlock</button>
           </div>
-          {filmSalesReady === false && !paidEnabled && <p className="paid-setup-note">Set up payouts in Account &amp; billing to offer paid films.</p>}
+          {filmSalesAvailable !== false && filmSalesReady === false && !paidEnabled && <p className="paid-setup-note">Set up payouts in Account &amp; billing to offer paid films.</p>}
           {paidEnabled && (
             <>
               <div className="paid-form-grid">
@@ -398,13 +420,14 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
                   Price
                   <div className="price-field">
                     <span>$</span>
-                    <input inputMode="numeric" value={paidPriceDollars} onChange={(event) => updatePaidPrice(event.target.value)} />
+                    <input disabled={filmSalesAvailable === false} inputMode="numeric" value={paidPriceDollars} onChange={(event) => updatePaidPrice(event.target.value)} />
                     <em>one-time</em>
                   </div>
                 </label>
                 <label>
                   Unlock label
                   <input
+                    disabled={filmSalesAvailable === false}
                     placeholder="Speeches Film"
                     value={video?.paidUnlockLabel ?? video?.title ?? ''}
                     onChange={(event) => updateVideo({ paidUnlockLabel: event.target.value })}
@@ -413,6 +436,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
                 <label className="wide">
                   Bonus tagline <span>optional</span>
                   <input
+                    disabled={filmSalesAvailable === false}
                     placeholder="The full, uncut speeches - every toast and tear."
                     value={video?.paidUnlockTagline ?? ''}
                     onChange={(event) => updateVideo({ paidUnlockTagline: event.target.value })}
@@ -422,15 +446,15 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
               <div className="payout-preview">
                 <span><DollarSign size={20} /></span>
                 <div>
-                  <strong>You receive ${payoutDollars} per unlock</strong>
-                  <p>Couple pays ${paidPriceDollars} / LANTERNA fee 10% (${feeDollars}) / paid out to your studio.</p>
+                  <strong>${payoutDollars} studio share before Stripe fees</strong>
+                  <p>Couple pays ${paidPriceDollars} / LANTERNA fee 10% (${feeDollars}) / Stripe processing is deducted separately.</p>
                 </div>
               </div>
             </>
           )}
         </section>
       </section>
-      {captureOpen && video && (
+      {captureOpen && video && createPortal((
         <div className="frame-capture-overlay" role="dialog" aria-label="Capture thumbnail frame" aria-modal="true">
           <div className="frame-capture-scrim" />
           <section className="frame-capture-stage">
@@ -443,6 +467,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
             </div>
             <CustomVideoPlayer
               className="frame-capture-player"
+              durationSeconds={videoDurationSeconds}
               fallbackBackground={video.gradient ?? gallery.gradient}
               onTimeChange={setCaptureSecond}
               posterUrl={posterUrl}
@@ -452,7 +477,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
             />
           </section>
         </div>
-      )}
+      ), capturePortalTarget)}
     </div>
   );
 }
@@ -462,6 +487,13 @@ function formatFrameTime(seconds: number) {
   const minutes = Math.floor(safeSeconds / 60);
   const remainingSeconds = safeSeconds - minutes * 60;
   return `${minutes}:${remainingSeconds.toFixed(1).padStart(4, '0')}`;
+}
+
+function durationSecondsFromLabel(duration: string | undefined) {
+  if (!duration) return 0;
+  const parts = duration.split(':').map(Number);
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) return 0;
+  return parts.reduce((seconds, part) => seconds * 60 + part, 0);
 }
 
 function latestReplacementJob(uploadJobs: UploadJob[], galleryId: string, videoId: string | undefined) {

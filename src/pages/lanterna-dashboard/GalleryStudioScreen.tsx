@@ -1685,6 +1685,23 @@ function DeliverTab({
       <Panel title="Delivery history">
         {activeGallery.recipients.length ? activeGallery.recipients.map((recipient) => <div className="recipient" key={recipient.email}><span>{recipient.email}<small>{recipient.status} · {recipient.at}</small></span></div>) : <p className="muted">No deliveries sent yet.</p>}
       </Panel>
+      <Panel title="Viewing activity">
+        <div className="activity-summary">
+          <div><strong>{activeGallery.activityCounts?.opens ?? 0}</strong><span>Gallery opens</span></div>
+          <div><strong>{activeGallery.activityCounts?.plays ?? 0}</strong><span>Film plays</span></div>
+          <div><strong>{activeGallery.activityCounts?.downloads ?? 0}</strong><span>Downloads</span></div>
+        </div>
+        {activeGallery.activity?.length ? (
+          <div className="activity-feed">
+            {activeGallery.activity.map((event) => (
+              <div className="activity-item" key={event.id}>
+                <span>{event.type === 'opened' ? 'Gallery opened' : event.type === 'video_viewed' ? 'Film played' : 'Film downloaded'}{event.videoTitle ? ` · ${event.videoTitle}` : ''}</span>
+                <small>{event.at}</small>
+              </div>
+            ))}
+          </div>
+        ) : <p className="muted">No client activity yet.</p>}
+      </Panel>
     </div>
   );
 }

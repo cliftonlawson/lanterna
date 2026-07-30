@@ -59,10 +59,7 @@ Implemented today:
 - `pending`: written immediately after Stripe Checkout Session creation, before redirecting the viewer to Stripe.
 - `complete`: written by the Stripe webhook when payment status is paid.
 - `failed`: written by webhook for expired or async-failed Checkout Sessions, and for `payment_intent.payment_failed` when a card is declined.
-
-Allowed but not currently written by application code:
-
-- `refunded`: no refund webhook handler writes this.
+- `refunded`: written when Stripe sends `charge.refunded`; future verification and recovery are revoked.
 
 For v1, Lanterna treats Stripe as the source of truth for refunds. Abandoned checkout remains pending until Stripe sends an expiration/failure event.
 
@@ -76,15 +73,13 @@ After unlock, the session verification response returns:
 - signed Cloudflare Stream playback when `stream_uid` is present and ready;
 - the unlocked `videoId`, used by the public page to open the player.
 
-Unlocked playback behaves like normal public playback. Stream is preferred when available, with the derived `web_copy_r2_key` as the R2 playback fallback. Download permission resolves in this order: a non-null video `download_enabled` override wins, otherwise the gallery `allow_downloads` value wins when non-null, otherwise the vendor `default_downloads` value applies. The original `r2_key` is signed only when that resolved permission is true; paid unlock grants viewing and does not bypass it.
+Unlocked playback behaves like normal public playback. Stream is preferred when available, with the derived `web_copy_r2_key` as the R2 playback fallback. Download permission resolves in this order: a non-null video `download_enabled` override wins, otherwise the gallery `allow_downloads` value wins when non-null, otherwise the vendor `default_downloads` value applies. The original `r2_key` is signed only when that permission is true and the gallery is still inside its one-year source-file window; paid unlock grants viewing and does not bypass either rule.
 
-Unlock state is a server-side purchase fact. The buyer can restore an unlock from another browser or device by entering the email address Stripe collected at checkout. No viewer account is created.
+Unlock state is a server-side purchase fact. The buyer can request recovery with the email address Stripe collected at checkout. Lanterna returns the same generic response whether a purchase exists and, when it does, emails a single-use 30-minute recovery link. No viewer account is created.
 
 ## Refunds
 
-Refunds are manual via Stripe Dashboard for v1. Lanterna does not currently listen for refund webhooks, change `video_unlock_purchases.status` to `refunded`, revoke a viewer's already-returned signed URLs, or show refund state in the studio dashboard.
-
-If refunds become a product surface, add a Stripe refund webhook handler and decide whether refund revokes future re-verification for the same checkout session.
+Refunds are initiated in Stripe Dashboard for v1. The connected-account webhook marks the purchase `refunded`, preventing future checkout-session verification and one-time-link recovery. Signed URLs already returned to a browser remain valid only until their short expiry.
 
 ## Known Gaps
 

@@ -1,6 +1,6 @@
 # Lanterna — Data Model & Schema Spec
 
-The connective tissue between the design handoff, the infrastructure SOP, and the build. This is the document Codex builds migrations from. It locks the retention and billing model: upload-capacity billing (the flow meter), a 2-year originals-and-streaming window nested inside a 10-year web-viewing window, then archive with a cheap extend. It defines every table, enum, state machine, and the Supabase-versus-Cloudflare boundary.
+The connective tissue between the design handoff, the infrastructure SOP, and the build. This is the document Codex builds migrations from. It locks the retention and billing model: upload-capacity billing (the flow meter), a 1-year originals-and-streaming window nested inside a 10-year web-viewing window, then archive with a cheap extend. It defines every table, enum, state machine, and the Supabase-versus-Cloudflare boundary.
 
 Postgres types throughout (Supabase). Section 12 lists what is locked versus what is still open (none of the open items block the schema).
 
@@ -78,9 +78,12 @@ vendor_branding
   logo_r2_key          text null
   accent_color         text                  -- hex
   custom_domain        text null             -- e.g. deliver.studioname.com
+  white_label_until    timestamptz null       -- paid block add-on expiry; server-owned
   default_downloads    boolean default true  -- default allow-download for new galleries
   updated_at           timestamptz default now()
 ```
+
+White label means the LANTERNA attribution is removed. It is active while an account has a current subscription or `white_label_until > now()`. Block customers without the $149/year add-on keep their studio name, colors, and gallery styling, but the public gallery carries a small "Powered by LANTERNA" attribution. Billing state and `white_label_until` are server-owned; authenticated studio clients cannot grant the feature to themselves. Existing custom domains remain grandfathered, but new custom-domain provisioning is not sold or self-served until the Cloudflare custom-hostname workflow exists.
 
 ---
 
@@ -104,7 +107,7 @@ galleries
   cover_photo_id      uuid null fk -> photos.id
 
   -- retention (two nested clocks)
-  source_file_window_days  int default 730     -- 2 yr: originals + Stream playback guaranteed
+  source_file_window_days  int default 365     -- 1 yr: originals + Stream playback guaranteed
   source_file_expires_at   timestamptz null    -- set on first delivery
   access_window_days       int default 3650    -- 10 yr: web-copy viewing window
   access_expires_at        timestamptz null    -- set on first delivery
@@ -127,8 +130,8 @@ galleries
 
 Notes:
 - `archived_at` is a flag, not a status value. A gallery can be `delivered` and archived at once. The old `active | archived` column maps to: status enum (new) + `archived_at` (new). This is the schema growth Codex called out.
-- Two retention clocks, both started at first delivery (`delivered_at`): `source_file_expires_at` = `delivered_at + source_file_window_days` (2 yr, originals + Stream), and `access_expires_at` = `delivered_at + access_window_days` (10 yr, web-copy viewing). The access clock is the long, cheap promise; the source-file clock is the short, expensive one nested inside it.
-- A Worker refuses to mint signed URLs once `now() > access_expires_at` unless `is_extended and now() < extended_until`. Between `source_file_expires_at` and `access_expires_at`, only the web copy is served (no master download, no Stream).
+- Two retention clocks, both started at first delivery (`delivered_at`): `source_file_expires_at` = `delivered_at + source_file_window_days` (1 yr, originals + Stream), and `access_expires_at` = `delivered_at + access_window_days` (10 yr, web-copy viewing). The access clock is the long, cheap promise; the source-file clock is the short, expensive one nested inside it.
+- The public API refuses to mint original-download URLs after `source_file_expires_at` and refuses all gallery access after `access_expires_at` unless extended. Until the retention worker lands, Stream may remain as the optimized playback path after the source-file window; the customer-facing access promise still holds, but physical master/Stream cleanup remains deferred.
 - Pre-flight gate (from the flow spec): publish/deliver is blocked unless `access_type` is set, at least one `video` exists, and a cover is chosen; `password` access requires non-null `password_hash`.
 
 ### 3a. Gallery design (the Studio editor state)
@@ -270,17 +273,25 @@ subscriptions                   -- the recurring plan, if any
   current_period_start    timestamptz
   current_period_end      timestamptz
   stripe_subscription_id  text null
+  stripe_customer_id      text null
+  stripe_checkout_session_id text null
+  billing_interval        text null           -- month | year
+  allowance_period_start  timestamptz null    -- annual allowance clock, independent of monthly billing
+  allowance_period_end    timestamptz null
+  cancel_at_period_end    boolean default false
   created_at              timestamptz default now()
 
 entitlements                    -- generic upload-capacity grants (the key abstraction)
   id              uuid pk
   account_id      uuid fk -> accounts.id
-  source          entitlement_source    -- subscription | block | topup
+  source          entitlement_source    -- welcome | subscription | block | topup
   gb_granted      numeric(10,2)
   period_start    timestamptz
   period_end      timestamptz           -- subscription: = period end; block: purchase + 1 year; confirm
   status          entitlement_status    -- active | expired | consumed
   stripe_reference text null
+  sku             text null
+  parent_reference text null             -- subscription id or block checkout id for a top-up
   created_at      timestamptz default now()
   index (account_id, status, period_end)
 
@@ -301,6 +312,8 @@ account_usage                   -- cached rollup; the dashboard reads this
   account_id              uuid pk fk -> accounts.id
   allowance_used_gb       numeric(18,9)   -- FLOW: decimal GB consumed this period
   allowance_total_gb      numeric(12,2)   -- sum of active entitlements
+  allowance_period_start  timestamptz null
+  allowance_period_end    timestamptz null
   hot_bytes_stored        bigint          -- STOCK: reconciled FROM Cloudflare R2
   cold_bytes_stored       bigint          -- STOCK: R2 Infrequent Access
   stream_minutes_stored   numeric(12,2)   -- STOCK: reconciled FROM Cloudflare Stream
@@ -324,7 +337,7 @@ if requested_gb > available: refuse slot, surface upgrade/block path
 else: issue upload slot, write usage_event on success
 ```
 
-Stacking policy (confirm): blocks are an alternative to a subscription, and 5GB top-ups ($5/yr) unlock only after a first block purchase. Model this as a rule over `entitlements`, not as structure.
+Stacking policy (locked): each new account receives one 10 GB welcome allowance valid for one year with standard, LANTERNA-branded galleries. Blocks are an alternative to a subscription. Any active subscription or 50 GB+ block can buy 5 GB top-ups for $5. Top-ups share the underlying annual allowance expiry and do not reset usage. Subscription top-ups pause with a past-due plan and expire if that subscription is canceled. Buying a paid subscription or block replaces the welcome period; an active block cannot be discarded by starting a subscription, and an active subscription cannot buy a block.
 
 ---
 
@@ -409,7 +422,7 @@ recipient_status     = sent | opened | failed
 delivery_event_type  = sent | failed | opened | video_viewed | downloaded
 plan_tier            = starter | pro | studio
 sub_status           = active | past_due | canceled
-entitlement_source   = subscription | block | topup
+entitlement_source   = welcome | subscription | block | topup
 entitlement_status   = active | expired | consumed
 upload_target        = video | photo
 job_status           = pending | uploading | paused | processing | complete | errored
@@ -429,7 +442,7 @@ draft --publish--> published --first send--> delivered
 
 **Gallery storage lifecycle** (the two-clock retention model):
 ```
-hot   --(now > source_file_expires_at, ~2 yr)-->  web
+hot   --(now > source_file_expires_at, ~1 yr)-->  web
         (generate compressed web copy; drop Stream copy + master unless extended/archived)
 web   --(now > access_expires_at, ~10 yr)-->      archived  (default) | purged
 web   --(paid extend)-->                          web, extended_until pushed out
@@ -446,16 +459,16 @@ uploading --> processing --> ready
 
 ## 10. Retention mechanics (the two-clock model, concretely)
 
-1. On first delivery, set both clocks: `source_file_expires_at = delivered_at + source_file_window_days` (default 730, 2 yr) and `access_expires_at = delivered_at + access_window_days` (default 3650, 10 yr).
+1. On first delivery, set both clocks: `source_file_expires_at = delivered_at + source_file_window_days` (default 365, 1 yr) and `access_expires_at = delivered_at + access_window_days` (default 3650, 10 yr).
 2. While in the source-file window, the gallery is `hot`: master in R2 plus a Stream copy, full quality, originals downloadable. This short window is the only expensive period.
 3. A daily job finds galleries past `source_file_expires_at`: generate the compressed `web_copy` (single MP4, ~3-5 GB), move it to cold R2, drop the Stream copy and the master, set `storage_tier = web`. Keep the master only if `is_extended` or archived-for-originals. The gallery keeps streaming to clients from the web copy, no Stream involvement, no per-minute meter.
 4. Notify ahead of `access_expires_at` (default ~30 days before): email the studio (and optionally client) with extend options, surfaced in-gallery too.
 5. A daily job finds galleries past `access_expires_at`: default to `archived` (web copy retained in cold, link goes dark, restorable by a paid extend) with a grace clock; `purged` only after grace elapses with no extend. A paid extend sets `is_extended = true` and pushes `extended_until`/`access_expires_at` out, keeping the web copy live.
 6. Purge: coordinated delete across R2, Stream (already gone), and Supabase soft-then-hard delete. Reconcile `account_usage` stock meters (not the flow meter).
 
-Cost shape this produces: full cost only during the 2-year source-file window; the 8-year viewing tail is a ~4 GB cold file at roughly $0.48/gallery/year, well under $4 total per gallery across the whole tail.
+Cost shape this produces: full cost only during the 1-year source-file window; the 9-year viewing tail is a ~4 GB cold file at roughly $0.48/gallery/year, around $4.32 total per gallery across the whole tail.
 
-Confirmed: clock starts at first delivery; access window 10 years; originals window 2 years; default end-state is archive (recoverable), not delete; no watermark anywhere. Still open: exact extension price, and the notify/grace day counts (defaults ~30 + ~30).
+Confirmed: clock starts at first delivery; access window 10 years; originals window 1 year; default end-state is archive (recoverable), not delete; no watermark anywhere. Still open: exact extension price, and the notify/grace day counts (defaults ~30 + ~30).
 
 ---
 
@@ -483,14 +496,17 @@ Ordering note for the circular reference: `galleries.cover_video_id`/`cover_phot
 
 **Locked:**
 - Billing meters upload capacity (the flow meter), VidFlow-style. Past galleries do not count against new allowance.
+- New accounts receive a one-time 10 GB welcome upload allowance, valid for one year, without white label or other paid-plan entitlements.
 - Both retention clocks start at first delivery (`delivered_at`).
-- Originals + Stream playback guaranteed for 2 years (`source_file_window_days = 730`).
+- Originals + Stream playback guaranteed for 1 year (`source_file_window_days = 365`).
 - Web-copy viewing window of 10 years (`access_window_days = 3650`).
 - After the originals window, serve a compressed web copy from cold R2 directly; drop the Stream copy and master (master kept only if extended/archived).
 - Default end-state at the access window is archive (recoverable cold copy), not delete.
 - No watermark anywhere; the feature is removed from the schema and must also be removed from the UI build (Vendor Dashboard + Studio styles), so no dead toggle gets wired.
 - Supabase Postgres is the relational store. RLS is account-scoped via `account_members`; client viewing is the Worker path, not RLS.
-- Blocks valid 1 year from purchase; blocks are an alternative to a subscription; 5GB top-ups unlock after a first block.
+- Blocks are valid 1 year from purchase and are an alternative to a subscription; 5 GB top-ups are available with either an active subscription or block and expire with that allowance period.
+- Subscription prices and annual upload allowances: Starter $19/month or $209/year for 50GB; Pro $69/month or $759/year for 1TB; Studio $169/month or $1,860/year for 5TB. Allowance refreshes each year and unused room does not roll over.
+- White-label branding is included with every subscription. Block customers see LANTERNA attribution unless they buy the $149/year white-label add-on.
 - Deleting an album reassigns its photos to "All" (not blocked, not deleted).
 - Per-gallery design lives in `gallery_design`; it overrides studio-wide `vendor_branding` (gallery-then-studio precedence). Background is image or video only (no solid color), faithful to the handoff.
 - Video tags are a `text[]` array on `videos` (no join table in v1). Replace Video is in-place, no version history.
@@ -500,4 +516,3 @@ Ordering note for the circular reference: `galleries.cover_video_id`/`cover_phot
 **Still open (do not block the schema; set before shipping retention to customers):**
 1. Exact extension price and who can pay it (studio, client, or either). Working logic: cover cold cost plus margin, ~$15-25/gallery/year.
 2. Notify-ahead and grace day counts (defaults ~30 days notice before access expiry, ~30 days grace before purge).
-3. Customer-facing copy that states the two clocks separately: "gallery viewable 10 years; original-quality downloads guaranteed the first 2."

@@ -9,6 +9,7 @@ import {
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { DOMParser as XmlDomParser } from '@xmldom/xmldom';
 import { requireEnv } from './http.js';
 
 const MIB = 1024 * 1024;
@@ -17,6 +18,16 @@ const MAX_PART_SIZE = 5 * 1024 * MIB;
 const MAX_PARTS = 10_000;
 const DEFAULT_PART_SIZE = 64 * MIB;
 const DEFAULT_PART_URL_TTL_SECONDS = 3600;
+
+// Cloudflare Pages bundles the browser XML parser from the AWS SDK, but the
+// Workers runtime does not provide DOMParser or Node DOM constants.
+if (typeof globalThis.DOMParser === 'undefined') globalThis.DOMParser = XmlDomParser;
+if (typeof globalThis.Node === 'undefined') {
+  globalThis.Node = Object.freeze({
+    ELEMENT_NODE: 1,
+    TEXT_NODE: 3,
+  });
+}
 
 function requiredR2Env(env) {
   requireEnv(env, ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME']);

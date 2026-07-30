@@ -20,6 +20,10 @@ function multipartParts(bytesTotal, partSize) {
 }
 
 async function run() {
+  assert.equal(typeof globalThis.DOMParser, 'function');
+  assert.equal(globalThis.Node.ELEMENT_NODE, 1);
+  assert.equal(globalThis.Node.TEXT_NODE, 3);
+
   const bytesTotal = 2.5 * 1024 * 1024 * 1024;
   const partSize = multipartPartSize({}, bytesTotal);
   assert.equal(partSize, 64 * MIB);

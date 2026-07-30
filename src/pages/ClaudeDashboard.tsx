@@ -14,6 +14,7 @@ import {
   processUploadedVideos,
   putFileToR2,
   setGalleryAccessRemote,
+  startPlatformBillingCheckout,
   startVideoPlaybackPreparation,
   uploadVideoMasterMultipart,
 } from './lanterna-dashboard/appApi';
@@ -63,8 +64,9 @@ type Props = {
 };
 
 export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
+  const [refreshBillingAfterCheckout] = useState(() => new URLSearchParams(window.location.search).get('billing') === 'success');
   const [theme, setTheme] = useState<Theme>('dark');
-  const [view, setView] = useState<View>(() => window.location.search.includes('connect=') ? 'account' : 'galleries');
+  const [view, setView] = useState<View>(() => /(?:connect|billing)=/.test(window.location.search) ? 'account' : 'galleries');
   const [studioTab, setStudioTab] = useState<StudioTab>('videos');
   const [folder, setFolder] = useState<ProjectName | null>(null);
   const [archiveTab, setArchiveTab] = useState<'active' | 'archived'>('active');
@@ -84,17 +86,65 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
   const galleriesRef = useRef<DashboardGallery[]>([]);
   const createGalleryRequestRef = useRef(false);
   const uploadAbortControllersRef = useRef(new Map<string, AbortController>());
+  const pendingCheckoutStartedRef = useRef(false);
 
   const activeGallery = galleries.find((gallery) => gallery.id === activeId) ?? galleries[0];
 
   useEffect(() => {
-    if (!window.location.search.includes('connect=')) return;
-    window.history.replaceState({}, '', window.location.pathname);
+    const params = new URLSearchParams(window.location.search);
+    const billingResult = params.get('billing');
+    if (billingResult === 'success') setToast('Payment received. Your allowance will update in a moment.');
+    if (billingResult === 'cancelled') setToast('Checkout cancelled. Nothing was charged.');
+    if (params.has('connect') || params.has('billing') || params.has('session_id')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   }, []);
+
+  useEffect(() => {
+    if (demo || pendingCheckoutStartedRef.current) return;
+    const sku = window.localStorage.getItem('lanterna.pendingCheckoutSku');
+    if (!sku) return;
+    pendingCheckoutStartedRef.current = true;
+    setView('account');
+    void startPlatformBillingCheckout(sku).then(({ checkoutUrl }) => {
+      window.localStorage.removeItem('lanterna.pendingCheckoutSku');
+      window.location.assign(checkoutUrl);
+    }).catch((error) => {
+      window.localStorage.removeItem('lanterna.pendingCheckoutSku');
+      setToast(error instanceof Error ? error.message : 'Checkout could not be opened.');
+    });
+  }, [demo]);
 
   useEffect(() => {
     galleriesRef.current = galleries;
   }, [galleries]);
+
+  useEffect(() => {
+    const currentState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    if (!currentState.lanternaDashboard) {
+      window.history.replaceState({
+        ...currentState,
+        lanternaDashboard: { view: 'galleries' },
+      }, '', window.location.pathname);
+    }
+
+    const restoreDashboardView = (event: PopStateEvent) => {
+      const state = event.state?.lanternaDashboard as {
+        activeGalleryId?: string;
+        studioTab?: StudioTab;
+        view?: View;
+      } | undefined;
+      if (!state?.view) return;
+      if (state.activeGalleryId) setActiveId(state.activeGalleryId);
+      if (state.studioTab) setStudioTab(state.studioTab);
+      setView(state.view);
+    };
+
+    window.addEventListener('popstate', restoreDashboardView);
+    return () => window.removeEventListener('popstate', restoreDashboardView);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -239,9 +289,32 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
   };
 
   const openGallery = (id: string, tab: StudioTab = 'videos') => {
+    const currentState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    window.history.replaceState({
+      ...currentState,
+      lanternaDashboard: { activeGalleryId: id, studioTab: tab, view: 'studio' },
+    }, '', '/');
     setActiveId(id);
     setStudioTab(tab);
     setView('studio');
+  };
+
+  const openUpload = (id: string) => {
+    const currentState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    window.history.replaceState({
+      ...currentState,
+      lanternaDashboard: { activeGalleryId: id, studioTab, view: 'studio' },
+    }, '', '/');
+    window.history.pushState({
+      ...currentState,
+      lanternaDashboard: { activeGalleryId: id, studioTab, view: 'upload' },
+    }, '', '/');
+    setActiveId(id);
+    setView('upload');
   };
 
   const openVideoDetail = (videoId: string) => {
@@ -381,9 +454,8 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
       };
 
       commitGalleries((prev) => [gallery, ...prev], 'create');
-      setActiveId(gallery.id);
       setNewOpen(false);
-      setView('upload');
+      openUpload(gallery.id);
       showToast(`Gallery "${name}" created`);
     } catch (error) {
       setCreateGalleryError(userMessage(error, 'Gallery could not be saved. Check your connection and try again.'));
@@ -540,6 +612,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
       if (!localJob) continue;
 
       let jobId = localJob.id;
+      let uploadSlotCreated = false;
       try {
         setJob(jobId, { status: 'pending' }, false);
         const slot = await createUploadSlot({
@@ -550,6 +623,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
           targetId: target.id,
           targetType,
         });
+        uploadSlotCreated = true;
         nextJobs = nextJobs.map((job) => job.id === jobId ? { ...job, id: slot.uploadJobId } : job);
         jobId = slot.uploadJobId;
         setUploadJobs(nextJobs);
@@ -630,9 +704,9 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
         setJob(jobId, {
           errorMessage: paused ? undefined : message,
           status: paused ? 'paused' : 'errored',
-          uploadPhase: targetType === 'video' ? 'uploading_master' : undefined,
+          uploadPhase: targetType === 'video' && uploadSlotCreated ? 'uploading_master' : undefined,
         });
-        if (targetType === 'photo') {
+        if (targetType === 'photo' || !uploadSlotCreated) {
           setGalleries((current) => {
             const updated = current.map((gallery) => gallery.id === activeGallery.id ? removePendingMediaFromGallery(gallery, target.id, targetType) : gallery);
             void saveDashboardGalleries(updated, 'upload');
@@ -912,7 +986,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
           onGalleryAccessChange={updateGalleryAccess}
           onBackgroundUpload={uploadBackgroundImage}
           onMusicUpload={uploadBackgroundMusic}
-          onOpenUpload={() => setView('upload')}
+          onOpenUpload={() => openUpload(activeGallery.id)}
           onSelectedPhotosChange={setSelectedPhotos}
           onSendDelivery={sendDelivery}
           onShowToast={showToast}
@@ -940,7 +1014,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
       )}
 
       {view === 'vendor' && <VendorDashboardScreen workspace={workspace} onWorkspaceChange={updateWorkspace} />}
-      {view === 'account' && <AccountScreen demo={demo} onSignUp={onSignUp} workspace={workspace} onBack={() => {
+      {view === 'account' && <AccountScreen demo={demo} refreshAfterCheckout={refreshBillingAfterCheckout} onSignUp={onSignUp} workspace={workspace} onBack={() => {
         setFolder(null);
         setView('galleries');
       }} />}

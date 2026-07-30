@@ -35,8 +35,8 @@ export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGalle
     <section className="page-shell upload-page">
       <header className="upload-page-header">
         <div className="upload-page-heading">
-          <button className="icon-text upload-back" onClick={onOpenGallery} type="button">
-            <ArrowLeft size={16} /> Back
+          <button aria-label={`Back to ${activeGallery.name} gallery`} className="icon-text upload-back" onClick={onOpenGallery} type="button">
+            <ArrowLeft size={16} /> Back to gallery
           </button>
           <div>
             <p className="upload-kicker">Uploading to</p>

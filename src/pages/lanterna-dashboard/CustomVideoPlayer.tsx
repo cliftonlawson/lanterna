@@ -20,7 +20,9 @@ declare global {
 
 type Props = {
   className?: string;
+  durationSeconds?: number;
   fallbackBackground?: string;
+  onPlay?: () => void;
   onTimeChange?: (seconds: number) => void;
   posterUrl?: string;
   streamUrl?: string;
@@ -30,17 +32,19 @@ type Props = {
 
 let streamSdkPromise: Promise<void> | null = null;
 
-export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeChange, posterUrl, streamUrl, title, videoUrl }: Props) {
+export function CustomVideoPlayer({ className = '', durationSeconds = 0, fallbackBackground, onPlay, onTimeChange, posterUrl, streamUrl, title, videoUrl }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<StreamPlayer | null>(null);
   const mutedRef = useRef(true);
+  const onPlayRef = useRef(onPlay);
   const [active, setActive] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const knownDuration = finiteMediaTime(durationSeconds);
+  const [duration, setDuration] = useState(knownDuration);
   const [fullscreen, setFullscreen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [interacting, setInteracting] = useState(false);
@@ -53,6 +57,10 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
   }, [muted]);
 
   useEffect(() => {
+    onPlayRef.current = onPlay;
+  }, [onPlay]);
+
+  useEffect(() => {
     onTimeChange?.(currentTime);
   }, [currentTime, onTimeChange]);
 
@@ -60,10 +68,10 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
     setActive(false);
     setPlaying(false);
     setCurrentTime(0);
-    setDuration(0);
+    setDuration(knownDuration);
     setStreamFailed(false);
     playerRef.current = null;
-  }, [streamUrl, videoUrl]);
+  }, [knownDuration, streamUrl, videoUrl]);
 
   useEffect(() => {
     const syncFullscreen = () => {
@@ -104,12 +112,15 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
       playerRef.current = player;
 
       const sync = () => {
-        setCurrentTime(Number.isFinite(player.currentTime) ? player.currentTime : 0);
-        setDuration(Number.isFinite(player.duration) ? player.duration : 0);
+        setCurrentTime(finiteMediaTime(player.currentTime));
+        const playerDuration = finiteMediaTime(player.duration);
+        if (playerDuration > 0) setDuration(playerDuration);
+        else if (knownDuration > 0) setDuration((current) => current > 0 ? current : knownDuration);
         setMuted(Boolean(player.muted));
       };
       const markPlaying = () => {
         setPlaying(true);
+        onPlayRef.current?.();
         sync();
       };
       const markPaused = () => {
@@ -118,6 +129,8 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
       };
 
       player.addEventListener('loadedmetadata', sync);
+      player.addEventListener('loadeddata', sync);
+      player.addEventListener('canplay', sync);
       player.addEventListener('durationchange', sync);
       player.addEventListener('timeupdate', sync);
       player.addEventListener('volumechange', sync);
@@ -144,19 +157,22 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
       if (removeTick) window.clearInterval(removeTick);
       playerRef.current = null;
     };
-  }, [active, iframeSrc, videoUrl]);
+  }, [active, iframeSrc, knownDuration, videoUrl]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!active || !video) return undefined;
 
     const sync = () => {
-      setCurrentTime(Number.isFinite(video.currentTime) ? video.currentTime : 0);
-      setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+      setCurrentTime(finiteMediaTime(video.currentTime));
+      const videoDuration = finiteMediaTime(video.duration);
+      if (videoDuration > 0) setDuration(videoDuration);
+      else if (knownDuration > 0) setDuration((current) => current > 0 ? current : knownDuration);
       setMuted(video.muted);
     };
     const markPlaying = () => {
       setPlaying(true);
+      onPlayRef.current?.();
       sync();
     };
     const markPaused = () => {
@@ -190,7 +206,7 @@ export function CustomVideoPlayer({ className = '', fallbackBackground, onTimeCh
       video.removeEventListener('pause', markPaused);
       video.removeEventListener('ended', markPaused);
     };
-  }, [active, videoUrl]);
+  }, [active, knownDuration, videoUrl]);
 
   const play = () => {
     if (!hasPlayableSource) return;
@@ -388,7 +404,12 @@ function loadStreamSdk() {
 }
 
 function formatTime(seconds: number) {
-  const safeSeconds = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+  const safeSeconds = Math.floor(finiteMediaTime(seconds));
   const minutes = Math.floor(safeSeconds / 60);
   return `${minutes}:${String(safeSeconds % 60).padStart(2, '0')}`;
+}
+
+function finiteMediaTime(value: unknown) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : 0;
 }

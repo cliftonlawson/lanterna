@@ -42,6 +42,7 @@ async function getApi<T>(path: string) {
 }
 
 export type ConnectStatus = {
+  available: boolean;
   chargesEnabled: boolean;
   detailsSubmitted: boolean;
   payoutsEnabled: boolean;
@@ -61,6 +62,56 @@ export async function getConnectStatus() {
 
 export async function startConnectOnboarding() {
   return postApi<{ onboardingUrl: string }>('/api/connect/onboarding', {});
+}
+
+export type PlatformBillingStatus = {
+  blockActive: boolean;
+  canBuyBlock: boolean;
+  canBuyTopup: boolean;
+  canBuyWhiteLabel: boolean;
+  periodEnd: string | null;
+  subscription: {
+    allowance_period_end: string | null;
+    billing_interval: 'month' | 'year' | null;
+    cancel_at_period_end: boolean;
+    current_period_end: string;
+    plan: 'starter' | 'pro' | 'studio';
+    seats: number;
+    status: 'active' | 'past_due';
+  } | null;
+  usage: {
+    allowanceTotalGb: number;
+    allowanceUsedGb: number;
+  };
+  whiteLabel: boolean;
+  whiteLabelUntil: string | null;
+};
+
+export async function getPlatformBillingStatus() {
+  return getApi<PlatformBillingStatus>('/api/billing/status');
+}
+
+export async function startPlatformBillingCheckout(sku: string) {
+  return postApi<{ checkoutUrl: string; sessionId: string }>('/api/billing/checkout', { sku });
+}
+
+export async function startPlatformBillingPortal() {
+  return postApi<{ portalUrl: string }>('/api/billing/portal', {});
+}
+
+export type StorageStatus = {
+  coldBytesStored: number;
+  hotBytesStored: number;
+  streamMinutesStored: number;
+  syncedAt?: string;
+};
+
+export async function getStorageStatus() {
+  return getApi<StorageStatus>('/api/storage/status');
+}
+
+export async function deleteAccountRemote(confirmation: string) {
+  return postApi<{ deleted: boolean }>('/api/account/delete', { confirmation });
 }
 
 export async function createGalleryRemote(input: {
@@ -117,11 +168,11 @@ export async function setGalleryArchivedRemote(galleryId: string, archived: bool
 
 export async function deleteGalleryPermanentlyRemote(galleryId: string) {
   return postApi<{
-    alreadyDeleted: boolean;
     deletedAt: string;
     galleryId: string;
     ok: boolean;
-    purgeTaskId: string;
+    removedObjects: number;
+    removedStreams: number;
   }>('/api/gallery/delete', { galleryId });
 }
 
@@ -478,6 +529,7 @@ export type PublicGalleryPayload = {
     customDomain: string | null;
     studioName: string;
     tagline: string | null;
+    whiteLabel: boolean;
   };
 };
 
@@ -494,6 +546,22 @@ export async function getPublicGallery(slug: string) {
   }
 
   return payload as PublicGalleryPayload;
+}
+
+export type PublicGalleryActivityType = 'opened' | 'video_viewed' | 'downloaded';
+
+export async function recordPublicGalleryActivity(
+  slug: string,
+  eventType: PublicGalleryActivityType,
+  sessionId: string,
+  videoId?: string,
+) {
+  const response = await fetch(`/api/public/gallery/${encodeURIComponent(slug)}/activity`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ eventType, sessionId, videoId }),
+  });
+  if (!response.ok) throw new Error(`Gallery activity could not be recorded (${response.status})`);
 }
 
 export async function unlockPublicGallery(slug: string, password: string) {
@@ -575,6 +643,17 @@ export async function recoverPaidUnlock(slug: string, videoId: string, email: st
     throw new Error(message);
   }
 
+  return payload as { message: string };
+}
+
+export async function confirmPaidUnlockRecovery(slug: string, token: string) {
+  const response = await fetch(`/api/public/gallery/${encodeURIComponent(slug)}/paid-unlock/recover/confirm`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(payload?.error ?? payload?.message ?? `Unlock recovery failed (${response.status})`);
   return payload as PaidUnlockSessionPayload;
 }
 

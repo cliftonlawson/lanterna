@@ -26,7 +26,7 @@ export function VendorDashboardScreen({ workspace, onWorkspaceChange }: Props) {
         <div>
           <p>Branding &amp; delivery</p>
           <h1>Vendor Dashboard</h1>
-          <span>Everything clients see when you deliver a film — your name, your mark, your domain.</span>
+          <span>Everything clients see when you deliver a film — your name, your mark, your style.</span>
         </div>
       </header>
 
@@ -71,19 +71,23 @@ export function VendorDashboardScreen({ workspace, onWorkspaceChange }: Props) {
           <section className="vendor-card">
             <header>
               <h2>Custom domain</h2>
-              <p>Deliver from your own address</p>
+              <p>Use a previously connected delivery address</p>
             </header>
             <label className="vendor-domain-input">
               <Globe2 size={18} />
               <input
                 aria-label="Custom delivery domain"
+                disabled
                 placeholder="deliver.yourstudio.com"
                 value={workspace.customDomain ?? ''}
-                onChange={(event) => onWorkspaceChange({ customDomain: event.target.value || null })}
               />
-              <span><i />{customDomain ? 'Custom' : 'Included'}</span>
+              <span><i />{customDomain ? 'Connected' : 'Not connected'}</span>
             </label>
-            <p className="vendor-domain-help">Leave this blank to use deliver.lanterna.video.</p>
+            <p className="vendor-domain-help">{customDomain
+              ? 'This existing domain remains connected. New custom-domain setup is not available in the dashboard yet.'
+              : workspace.whiteLabel
+                ? 'White label removes LANTERNA attribution. New custom-domain setup is not available yet.'
+                : 'Subscriptions or the $149/year add-on remove LANTERNA attribution from client galleries.'}</p>
           </section>
 
           <section className="vendor-card">
@@ -120,7 +124,7 @@ export function VendorDashboardScreen({ workspace, onWorkspaceChange }: Props) {
               <div className="vendor-preview-socials" aria-hidden="true">
                 <span><Linkedin size={16} /></span><span><Instagram size={16} /></span><span><Youtube size={17} /></span>
               </div>
-              <small><LanternLogo size={14} /> Powered by LANTERNA</small>
+              {!workspace.whiteLabel && <small><LanternLogo size={14} /> Powered by LANTERNA</small>}
             </div>
           </div>
         </aside>

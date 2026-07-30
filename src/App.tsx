@@ -4,10 +4,11 @@ import { useAuth } from './contexts/useAuth';
 import { Landing } from './pages/Landing';
 import { Auth } from './pages/Auth';
 import { Dashboard } from './pages/Dashboard';
-import { DemoDashboard } from './pages/DemoDashboard';
 import { PublicGalleryPage } from './pages/PublicGalleryPage';
+import { LanternLogo } from './components/LanternLogo';
+import { LegalPage, NotFoundPage, type LegalPageKind } from './pages/LegalPage';
 
-type Screen = 'landing' | 'auth' | 'dashboard' | 'demo';
+type Screen = 'landing' | 'auth' | 'dashboard';
 
 const APP_ORIGIN = 'https://app.lanterna.video';
 const DELIVERY_ORIGIN = 'https://deliver.lanterna.video';
@@ -15,11 +16,13 @@ const MARKETING_ORIGIN = 'https://lanterna.video';
 const MARKETING_HOSTS = new Set(['lanterna.video', 'www.lanterna.video']);
 
 function AppInner() {
-  const { user, loading } = useAuth();
+  const { user, loading, recoveryMode } = useAuth();
   const [screen, setScreen] = useState<Screen>(initialScreen);
   const publicSlug = publicGallerySlug();
-  const landingRoute = window.location.pathname === '/landing';
+  const landingRoute = window.location.pathname === '/landing' || window.location.pathname === '/support';
+  const contactRequested = window.location.pathname === '/support' || new URLSearchParams(window.location.search).has('contact');
   const redirectTarget = productionRedirectTarget(publicSlug);
+  const legalPage = legalPageKind();
 
   useEffect(() => {
     if (redirectTarget) {
@@ -28,13 +31,13 @@ function AppInner() {
   }, [redirectTarget]);
 
   useEffect(() => {
-    if (user && window.location.pathname === '/auth') {
+    if (user && window.location.pathname === '/auth' && !recoveryMode) {
       window.history.replaceState({}, '', '/');
     }
-    if (user && screen === 'auth') {
+    if (user && screen === 'auth' && !recoveryMode) {
       setScreen('dashboard');
     }
-  }, [user, screen]);
+  }, [recoveryMode, user, screen]);
 
   if (redirectTarget) {
     return null;
@@ -44,12 +47,18 @@ function AppInner() {
     return <PublicGalleryPage slug={publicSlug} />;
   }
 
+  if (legalPage) return <LegalPage kind={legalPage} />;
+
+  if (isMarketingHost() && !['/', '/landing', '/support'].includes(window.location.pathname)) return <NotFoundPage />;
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#080808] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-2 border-orange-500/30 border-t-orange-500 rounded-full animate-spin" />
-          <p className="text-sm text-gray-600">Loading LANTERNA...</p>
+      <div className="app-loading">
+        <div className="app-loading-glow" />
+        <div className="app-loading-content">
+          <LanternLogo size={40} />
+          <div className="app-loading-spinner" />
+          <p>Opening LANTERNA</p>
         </div>
       </div>
     );
@@ -58,49 +67,34 @@ function AppInner() {
   if (landingRoute && screen === 'landing') {
     return (
       <Landing
+        initialContactOpen={contactRequested}
+        onChoosePlan={(sku) => openAuth('signup', setScreen, sku)}
         onGetStarted={() => openAuth('signup', setScreen)}
         onSignIn={() => openAuth('signin', setScreen)}
-        onTryDemo={() => setScreen('demo')}
+        onTryDemo={() => openAuth('signup', setScreen)}
       />
     );
   }
 
   if (isMarketingHost()) {
-    if (screen === 'demo') {
-      return (
-        <DemoDashboard
-          onSignUp={() => openAuth('signup', setScreen)}
-          onBack={() => setScreen('landing')}
-        />
-      );
-    }
-
     return (
       <Landing
+        initialContactOpen={contactRequested}
+        onChoosePlan={(sku) => openAuth('signup', setScreen, sku)}
         onGetStarted={() => openAuth('signup', setScreen)}
         onSignIn={() => openAuth('signin', setScreen)}
-        onTryDemo={() => setScreen('demo')}
+        onTryDemo={() => openAuth('signup', setScreen)}
       />
     );
   }
 
   // Authenticated flow
-  if (user) {
+  if (user && !recoveryMode) {
     return <Dashboard />;
   }
 
   if (window.location.hostname === 'app.lanterna.video') {
     return <Auth onBack={() => window.location.assign(MARKETING_ORIGIN)} />;
-  }
-
-  // Demo mode — no auth required
-  if (screen === 'demo') {
-    return (
-      <DemoDashboard
-        onSignUp={() => setScreen('auth')}
-        onBack={() => setScreen('landing')}
-      />
-    );
   }
 
   // Auth page
@@ -111,18 +105,24 @@ function AppInner() {
   // Landing page
   return (
     <Landing
+      initialContactOpen={contactRequested}
+      onChoosePlan={(sku) => openAuth('signup', setScreen, sku)}
       onGetStarted={() => openAuth('signup', setScreen)}
       onSignIn={() => openAuth('signin', setScreen)}
-      onTryDemo={() => setScreen('demo')}
+      onTryDemo={() => openAuth('signup', setScreen)}
     />
   );
 }
 
+function legalPageKind(): LegalPageKind | null {
+  const value = window.location.pathname.replace(/^\/+|\/+$/g, '');
+  return value === 'privacy' || value === 'terms' || value === 'refunds' ? value : null;
+}
+
 function initialScreen(): Screen {
-  if (window.location.pathname === '/landing') return 'landing';
+  if (window.location.pathname === '/landing' || window.location.pathname === '/support') return 'landing';
   if (window.location.pathname === '/auth') return 'auth';
   if (window.location.search.includes('auth=true')) return 'auth';
-  if (window.location.search.includes('demo=true')) return 'demo';
   return 'landing';
 }
 
@@ -135,14 +135,16 @@ function isMarketingHost() {
   return MARKETING_HOSTS.has(window.location.hostname);
 }
 
-function openAuth(mode: 'signin' | 'signup', setScreen: (screen: Screen) => void) {
+function openAuth(mode: 'signin' | 'signup', setScreen: (screen: Screen) => void, checkoutSku?: string) {
+  const params = new URLSearchParams();
+  if (mode === 'signup') params.set('mode', 'signup');
+  if (checkoutSku) params.set('checkout', checkoutSku);
+  const query = params.size ? `?${params.toString()}` : '';
   if (isProductionHost()) {
-    const query = mode === 'signup' ? '?mode=signup' : '';
     window.location.assign(`${APP_ORIGIN}/auth${query}`);
     return;
   }
 
-  const query = mode === 'signup' ? '?mode=signup' : '';
   window.history.replaceState({}, '', `/auth${query}`);
   setScreen('auth');
 }
@@ -158,11 +160,13 @@ function productionRedirectTarget(publicSlug: string) {
   const galleryPath = `${pathname}${search}`;
 
   if (hostname === 'deliver.lanterna.video') {
-    return publicSlug ? '' : MARKETING_ORIGIN;
+    if (publicSlug) return '';
+    return pathname === '/support' ? `${MARKETING_ORIGIN}/?contact=true` : MARKETING_ORIGIN;
   }
 
   if (hostname === 'app.lanterna.video') {
     if (publicSlug) return `${DELIVERY_ORIGIN}${galleryPath}`;
+    if (pathname === '/support') return `${MARKETING_ORIGIN}/?contact=true`;
     if (pathname === '/landing') return MARKETING_ORIGIN;
     return '';
   }

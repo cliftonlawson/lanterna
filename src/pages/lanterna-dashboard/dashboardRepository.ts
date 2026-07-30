@@ -1,6 +1,6 @@
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { userMessage } from '../../lib/userMessages';
-import { clearUploadJobRemote, deleteGalleryMediaRemote, deleteGalleryPermanentlyRemote, recordGalleryDelivery, setGalleryArchivedRemote } from './appApi';
+import { clearUploadJobRemote, deleteGalleryMediaRemote, deleteGalleryPermanentlyRemote, getStorageStatus, recordGalleryDelivery, setGalleryArchivedRemote } from './appApi';
 import { parseRecipientEmails, upsertSentRecipients } from './delivery';
 import {
   loadStoredGalleries,
@@ -17,6 +17,7 @@ import {
   schemaBundleToGallery,
   type AlbumRecord,
   type DeliveryRecipientRecord,
+  type DeliveryEventRecord,
   type GalleryDesignRecord,
   type GalleryRecord,
   type PhotoRecord,
@@ -112,6 +113,27 @@ function hasUploadedVideoAsset(video: VideoRecord) {
 
 function isVisibleDashboardVideo(video: VideoRecord) {
   return hasUploadedVideoAsset(video);
+}
+
+async function loadGalleryActivityEvents(galleryIds: string[]) {
+  const pageSize = 1000;
+  const events: DeliveryEventRecord[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('delivery_events')
+      .select('id,gallery_id,video_id,event_type,occurred_at,metadata')
+      .in('gallery_id', galleryIds)
+      .in('event_type', ['opened', 'video_viewed', 'downloaded'])
+      .order('occurred_at', { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []) as DeliveryEventRecord[];
+    events.push(...page);
+    if (page.length < pageSize) return events;
+    from += pageSize;
+  }
 }
 
 function mergeLocalVideoMonetization(remote: DashboardGallery[], local: DashboardGallery[]) {
@@ -316,12 +338,14 @@ export async function loadDashboardGalleries() {
       albumsResult,
       photosResult,
       recipientsResult,
+      events,
     ] = await Promise.all([
       supabase.from('gallery_design').select('*').in('gallery_id', galleryIds),
       supabase.from('videos').select('*').in('gallery_id', galleryIds).is('deleted_at', null).order('sort_order'),
       supabase.from('albums').select('*').in('gallery_id', galleryIds).is('deleted_at', null).order('sort_order'),
       supabase.from('photos').select('*').in('gallery_id', galleryIds).is('deleted_at', null).order('sort_order'),
       supabase.from('delivery_recipients').select('*').in('gallery_id', galleryIds).order('created_at', { ascending: false }),
+      loadGalleryActivityEvents(galleryIds),
     ]);
 
     if (designsResult.error) throw designsResult.error;
@@ -379,6 +403,7 @@ export async function loadDashboardGalleries() {
         albums: galleryAlbums,
         photos: galleryPhotos,
         recipients: recipients.filter((recipient) => recipient.gallery_id === gallery.id),
+        events: events.filter((event) => event.gallery_id === gallery.id),
       }, index);
     });
 
@@ -401,17 +426,25 @@ export async function loadWorkspaceAccount(): Promise<WorkspaceAccount> {
     const userId = await currentUserId();
     if (!accountId || !userId) throw new Error('Supabase account membership is missing.');
 
-    const [brandingResult, usageResult, userResult] = await Promise.all([
+    const [brandingResult, subscriptionResult, usageResult, userResult, storageStatus] = await Promise.all([
       supabase.from('vendor_branding').select('*').eq('account_id', accountId).maybeSingle(),
+      supabase.from('subscriptions').select('id').eq('account_id', accountId).eq('status', 'active').gt('current_period_end', new Date().toISOString()).limit(1).maybeSingle(),
       supabase.from('account_usage').select('*').eq('account_id', accountId).maybeSingle(),
       supabase.from('users').select('*').eq('id', userId).maybeSingle(),
+      getStorageStatus().catch(() => null),
     ]);
 
     if (brandingResult.error) throw brandingResult.error;
+    if (subscriptionResult.error) throw subscriptionResult.error;
     if (usageResult.error) throw usageResult.error;
     if (userResult.error) throw userResult.error;
 
     const allowanceTotalGb = Number(usageResult.data?.allowance_total_gb ?? 0);
+    const whiteLabelUntil = brandingResult.data?.white_label_until
+      ? Date.parse(String(brandingResult.data.white_label_until))
+      : 0;
+    const whiteLabel = Boolean(subscriptionResult.data)
+      || (Number.isFinite(whiteLabelUntil) && whiteLabelUntil > Date.now());
     const workspace: WorkspaceAccount = {
       ...defaultWorkspaceAccount,
       accountId,
@@ -419,12 +452,13 @@ export async function loadWorkspaceAccount(): Promise<WorkspaceAccount> {
       tagline: brandingResult.data?.tagline ?? defaultWorkspaceAccount.tagline,
       accentColor: brandingResult.data?.accent_color ?? defaultWorkspaceAccount.accentColor,
       defaultDownloads: brandingResult.data?.default_downloads ?? defaultWorkspaceAccount.defaultDownloads,
-      customDomain: brandingResult.data?.custom_domain ?? defaultWorkspaceAccount.customDomain,
+      customDomain: whiteLabel ? brandingResult.data?.custom_domain ?? defaultWorkspaceAccount.customDomain : null,
+      whiteLabel,
       allowanceUsedGb: Number(usageResult.data?.allowance_used_gb ?? 0),
-      allowanceTotalGb: allowanceTotalGb > 0 ? allowanceTotalGb : defaultWorkspaceAccount.allowanceTotalGb,
-      hotBytesStored: Number(usageResult.data?.hot_bytes_stored ?? defaultWorkspaceAccount.hotBytesStored),
-      coldBytesStored: Number(usageResult.data?.cold_bytes_stored ?? defaultWorkspaceAccount.coldBytesStored),
-      streamMinutesStored: Number(usageResult.data?.stream_minutes_stored ?? defaultWorkspaceAccount.streamMinutesStored),
+      allowanceTotalGb: Math.max(0, allowanceTotalGb),
+      hotBytesStored: Number(storageStatus?.hotBytesStored ?? usageResult.data?.hot_bytes_stored ?? defaultWorkspaceAccount.hotBytesStored),
+      coldBytesStored: Number(storageStatus?.coldBytesStored ?? usageResult.data?.cold_bytes_stored ?? defaultWorkspaceAccount.coldBytesStored),
+      streamMinutesStored: Number(storageStatus?.streamMinutesStored ?? usageResult.data?.stream_minutes_stored ?? defaultWorkspaceAccount.streamMinutesStored),
       userName: userResult.data?.display_name ?? defaultWorkspaceAccount.userName,
       userEmail: userResult.data?.email ?? defaultWorkspaceAccount.userEmail,
     };
@@ -453,7 +487,7 @@ export async function saveWorkspaceAccount(workspace: WorkspaceAccount): Promise
       studio_name: workspace.studioName,
       tagline: workspace.tagline,
       accent_color: workspace.accentColor,
-      custom_domain: workspace.customDomain,
+      custom_domain: workspace.whiteLabel ? workspace.customDomain : null,
       default_downloads: workspace.defaultDownloads,
     });
 

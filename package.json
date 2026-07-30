@@ -14,19 +14,27 @@
     "test:gallery-slugs": "node scripts/test-gallery-slugs.mjs",
     "test:gallery-content": "node scripts/test-gallery-content-honesty.mjs",
     "test:gallery-deletion": "node scripts/test-gallery-deletion.mjs",
+    "test:gallery-activity": "node scripts/test-gallery-activity.mjs",
+    "test:contact": "node scripts/test-contact-form.mjs",
     "test:media-task-ledger": "node scripts/test-honest-media-tasks.mjs",
     "test:music": "node scripts/test-music-upload.mjs",
+    "test:platform-billing": "node scripts/test-platform-billing.mjs",
+    "test:pricing-entitlements": "node scripts/test-pricing-entitlements.mjs",
     "test:r2-signing": "node scripts/test-r2-signing.mjs",
     "test:stripe-connect": "node scripts/test-stripe-connect.mjs",
     "test:user-copy": "node scripts/test-user-facing-copy.mjs",
     "test:upload-accounting": "node scripts/test-upload-accounting.mjs",
     "test:video-ingestion": "node scripts/test-dual-video-ingestion.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "test:launch-integrity": "node scripts/test-launch-integrity.mjs",
+    "test": "npm run test:gallery-password && npm run test:gallery-slugs && npm run test:gallery-content && npm run test:gallery-deletion && npm run test:gallery-activity && npm run test:contact && npm run test:launch-integrity && npm run test:media-task-ledger && npm run test:music && npm run test:platform-billing && npm run test:pricing-entitlements && npm run test:r2-signing && npm run test:stripe-connect && npm run test:user-copy && npm run test:upload-accounting && npm run test:video-ingestion",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",
     "@aws-sdk/s3-request-presigner": "^3.1085.0",
     "@supabase/supabase-js": "^2.57.4",
+    "@xmldom/xmldom": "^0.9.10",
     "lucide-react": "^0.344.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -35,16 +43,16 @@
     "@eslint/js": "^9.9.1",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.4.18",
-    "eslint": "^9.9.1",
-    "eslint-plugin-react-hooks": "^5.1.0-rc.0",
-    "eslint-plugin-react-refresh": "^0.4.11",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^15.9.0",
-    "postcss": "^8.4.35",
+    "postcss": "^8.5.20",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.5.3",
-    "typescript-eslint": "^8.3.0",
-    "vite": "^5.4.2"
+    "typescript-eslint": "^8.64.0",
+    "vite": "^8.1.5"
   }
 }

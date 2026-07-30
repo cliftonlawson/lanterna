@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import {
   createPaidUnlockCheckout,
   startStripeConnectOnboarding,
+  stripeConnectStatus,
   stripeConnectWebhook,
 } from '../src/server/stripeCheckout.js';
 
 const env = {
+  FILM_SALES_ENABLED: 'true',
+  STRIPE_SANDBOX_WRITES_ENABLED: 'true',
   STRIPE_CONNECT_WEBHOOK_SECRET: 'whsec_connect_test',
   STRIPE_SECRET_KEY: 'sk_test_lanterna',
   SUPABASE_ANON_KEY: 'anon_test',
@@ -35,6 +38,7 @@ globalThis.fetch = async (input, init = {}) => {
   if (url.includes('/rest/v1/account_members?select=account_id')) return response([{ account_id: accountId }]);
   if (url.includes('/rest/v1/account_members?select=role')) return response([{ role: 'owner' }]);
   if (url.includes('/rest/v1/vendor_branding?')) return response([{ studio_name: 'Northstar Films' }]);
+  if (url.includes('/rest/v1/video_unlock_purchases?select=amount_cents')) return response([]);
   if (url.includes('/rest/v1/stripe_connected_accounts?select=*&account_id=')) {
     return response(savedConnection ? [savedConnection] : []);
   }
@@ -97,6 +101,41 @@ globalThis.fetch = async (input, init = {}) => {
 };
 
 try {
+  const unavailable = await createPaidUnlockCheckout(
+    new Request('https://deliver.lanterna.video/api/public/gallery/alexa-and-nick/paid-unlock/checkout', {
+      body: JSON.stringify({ videoId }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+    { ...env, FILM_SALES_ENABLED: 'false' },
+    'alexa-and-nick',
+  );
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).details.code, 'film_sales_unavailable');
+
+  const disabledStatus = await stripeConnectStatus(
+    new Request('https://app.lanterna.video/api/connect/status', {
+      headers: { authorization: 'Bearer user-session' },
+    }),
+    { ...env, FILM_SALES_ENABLED: 'false' },
+  );
+  assert.equal(disabledStatus.status, 200);
+  assert.equal((await disabledStatus.json()).available, false);
+
+  const disabledOnboarding = await startStripeConnectOnboarding(
+    authenticatedRequest('https://app.lanterna.video/api/connect/onboarding'),
+    { ...env, FILM_SALES_ENABLED: 'false' },
+  );
+  assert.equal(disabledOnboarding.status, 503);
+  assert.equal((await disabledOnboarding.json()).details.code, 'film_sales_unavailable');
+
+  const sandboxOnboarding = await startStripeConnectOnboarding(
+    authenticatedRequest('https://app.lanterna.video/api/connect/onboarding'),
+    { ...env, STRIPE_SANDBOX_WRITES_ENABLED: 'false' },
+  );
+  assert.equal(sandboxOnboarding.status, 503);
+  assert.equal((await sandboxOnboarding.json()).details.code, 'stripe_live_mode_required');
+
   const onboarding = await startStripeConnectOnboarding(authenticatedRequest('https://app.lanterna.video/api/connect/onboarding'), env);
   assert.equal(onboarding.status, 200);
   assert.equal((await onboarding.json()).onboardingUrl, 'https://connect.stripe.com/setup/test');
@@ -107,6 +146,8 @@ try {
   assert.equal(accountParams.get('controller[requirement_collection]'), 'stripe');
   assert.equal(accountParams.get('controller[stripe_dashboard][type]'), 'full');
   assert.equal(accountParams.get('capabilities[card_payments][requested]'), 'true');
+  assert.equal(accountParams.get('capabilities[transfers][requested]'), 'true');
+  assert.equal(accountCreate.headers.get('idempotency-key'), `lanterna-connect-v2-${accountId}`);
 
   const checkout = await createPaidUnlockCheckout(
     new Request('https://deliver.lanterna.video/api/public/gallery/alexa-and-nick/paid-unlock/checkout', {
