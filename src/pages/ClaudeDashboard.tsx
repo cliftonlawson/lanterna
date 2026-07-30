@@ -563,6 +563,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
       if (!localJob) continue;
 
       let jobId = localJob.id;
+      let uploadSlotCreated = false;
       try {
         setJob(jobId, { status: 'pending' }, false);
         const slot = await createUploadSlot({
@@ -573,6 +574,7 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
           targetId: target.id,
           targetType,
         });
+        uploadSlotCreated = true;
         nextJobs = nextJobs.map((job) => job.id === jobId ? { ...job, id: slot.uploadJobId } : job);
         jobId = slot.uploadJobId;
         setUploadJobs(nextJobs);
@@ -653,9 +655,9 @@ export function ClaudeDashboard({ demo = false, onBack, onSignUp }: Props) {
         setJob(jobId, {
           errorMessage: paused ? undefined : message,
           status: paused ? 'paused' : 'errored',
-          uploadPhase: targetType === 'video' ? 'uploading_master' : undefined,
+          uploadPhase: targetType === 'video' && uploadSlotCreated ? 'uploading_master' : undefined,
         });
-        if (targetType === 'photo') {
+        if (targetType === 'photo' || !uploadSlotCreated) {
           setGalleries((current) => {
             const updated = current.map((gallery) => gallery.id === activeGallery.id ? removePendingMediaFromGallery(gallery, target.id, targetType) : gallery);
             void saveDashboardGalleries(updated, 'upload');

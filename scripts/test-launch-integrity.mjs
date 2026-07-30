@@ -7,6 +7,7 @@ const auth = read('../src/pages/Auth.tsx');
 const app = read('../src/App.tsx');
 const contact = read('../src/components/ContactModal.tsx');
 const context = read('../src/contexts/AuthContext.tsx');
+const dashboard = read('../src/pages/ClaudeDashboard.tsx');
 const headers = read('../public/_headers');
 const html = read('../index.html');
 const landing = read('../src/pages/Landing.tsx');
@@ -65,5 +66,7 @@ assert.doesNotMatch(landing, /coming soon/i);
 assert.doesNotMatch(legal, /coming soon|not currently available|when the feature launches/i);
 assert.doesNotMatch(account, /coming soon/i);
 assert.doesNotMatch(videoDrawer, /coming soon/i);
+assert.match(dashboard, /let uploadSlotCreated = false/);
+assert.match(dashboard, /targetType === 'photo' \|\| !uploadSlotCreated/);
 
 console.log('launch integrity checks passed');
