@@ -1561,6 +1561,7 @@ button.upload-queue-main { cursor: pointer; }
 .upload-queue-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
 .upload-queue-action { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--hover); color: var(--text2); cursor: pointer; font-size: 12.5px; font-weight: 700; }
 .upload-queue-action:hover { border-color: var(--border-strong); background: var(--raise); }
+.upload-queue-action.is-danger { color: var(--danger); }
 .upload-queue-card.status-errored .upload-queue-action { color: var(--danger); }
 .upload-queue-empty { display: grid; justify-items: center; gap: 5px; padding: 34px 24px; border: 1px dashed var(--border-strong); border-radius: 18px; color: var(--muted); text-align: center; }
 .upload-queue-empty strong { color: var(--text); font-size: 14px; }

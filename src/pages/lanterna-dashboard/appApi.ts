@@ -340,6 +340,18 @@ export async function clearUploadJobRemote(uploadJobId: string) {
   });
 }
 
+export async function cancelUploadJobRemote(uploadJobId: string) {
+  return postApi<{
+    isReplacement: boolean;
+    ok: boolean;
+    targetId: string | null;
+    targetType: UploadTargetType;
+    uploadJobId: string;
+  }>('/api/upload/cancel-job', {
+    uploadJobId,
+  });
+}
+
 export async function deleteGalleryMediaRemote(input: {
   galleryId: string;
   targetId: string;
@@ -661,9 +673,18 @@ export function putFileToR2(
   file: File,
   r2: R2PutSlot,
   onProgress: (bytesUploaded: number) => void,
+  signal?: AbortSignal,
 ) {
   return new Promise<void>((resolve, reject) => {
     const request = new XMLHttpRequest();
+    const cleanup = () => signal?.removeEventListener('abort', abort);
+    const abort = () => request.abort();
+
+    if (signal?.aborted) {
+      reject(new DOMException('Upload cancelled', 'AbortError'));
+      return;
+    }
+
     request.open(r2.method, r2.url);
 
     Object.entries(r2.headers ?? {}).forEach(([name, value]) => {
@@ -674,6 +695,7 @@ export function putFileToR2(
       if (event.lengthComputable) onProgress(event.loaded);
     };
     request.onload = () => {
+      cleanup();
       if (request.status >= 200 && request.status < 300) {
         onProgress(file.size);
         resolve();
@@ -681,7 +703,15 @@ export function putFileToR2(
         reject(new Error(`R2 upload failed (${request.status})`));
       }
     };
-    request.onerror = () => reject(new Error('R2 upload failed.'));
+    request.onerror = () => {
+      cleanup();
+      reject(new Error('R2 upload failed.'));
+    };
+    request.onabort = () => {
+      cleanup();
+      reject(new DOMException('Upload cancelled', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
     request.send(file);
   });
 }

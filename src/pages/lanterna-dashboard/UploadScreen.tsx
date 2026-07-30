@@ -10,13 +10,14 @@ type Props = {
   onOpenGallery: () => void;
   onOpenVideoDetail: (videoId: string) => void;
   onAddFiles: (files: FileList) => void;
+  onCancelUploadJob: (jobId: string) => void;
   onRemoveUploadJob: (jobId: string) => void;
   onResumeVideoUpload: (jobId: string, file: File) => void;
   onRetryVideoPlayback: (jobId: string) => void;
   onToggleUploadJob: (jobId: string) => void;
 };
 
-export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGallery, onOpenVideoDetail, onAddFiles, onRemoveUploadJob, onResumeVideoUpload, onRetryVideoPlayback, onToggleUploadJob }: Props) {
+export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGallery, onOpenVideoDetail, onAddFiles, onCancelUploadJob, onRemoveUploadJob, onResumeVideoUpload, onRetryVideoPlayback, onToggleUploadJob }: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const resumeInputRefs = useRef(new Map<string, HTMLInputElement>());
   const dragDepthRef = useRef(0);
@@ -117,6 +118,12 @@ export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGalle
               && job.uploadPhase === 'uploading_master'
               && (job.status === 'paused' || job.status === 'errored');
             const canPauseMaster = job.targetType === 'video' && job.uploadPhase === 'uploading_master' && job.status === 'uploading';
+            const canCancel = job.status === 'uploading'
+              || job.status === 'paused'
+              || job.status === 'processing'
+              || canResumeMaster
+              || canRetryPlayback;
+            const canClear = job.status === 'complete' || (job.status === 'errored' && !canResumeMaster && !canRetryPlayback);
             const statusLabel = uploadStatusLabel(job, canOpenVideo);
             const targetGradient = uploadTargetGradient(activeGallery, job);
             const cardContent = (
@@ -188,17 +195,26 @@ export function UploadScreen({ activeGallery, uploadJobs, workspace, onOpenGalle
                       event.stopPropagation();
                       onRetryVideoPlayback(job.id);
                     }} type="button"><RefreshCw size={14} /> Retry preparation</button>
-                  ) : canResumeMaster ? (
+                  ) : null}
+                  {canResumeMaster ? (
                     <button className="upload-queue-action" onClick={(event) => {
                       event.stopPropagation();
                       resumeInputRefs.current.get(job.id)?.click();
                     }} type="button"><Upload size={14} /> Resume upload</button>
-                  ) : canPauseMaster ? (
+                  ) : null}
+                  {canPauseMaster ? (
                     <button className="upload-queue-action" onClick={(event) => {
                       event.stopPropagation();
                       onToggleUploadJob(job.id);
                     }} type="button"><Pause size={14} /> Pause</button>
-                  ) : job.status === 'complete' || job.status === 'errored' ? (
+                  ) : null}
+                  {canCancel ? (
+                    <button className="upload-queue-action is-danger" onClick={(event) => {
+                      event.stopPropagation();
+                      onCancelUploadJob(job.id);
+                    }} type="button"><X size={14} /> Cancel</button>
+                  ) : null}
+                  {canClear ? (
                     <button className="upload-queue-action" onClick={(event) => {
                       event.stopPropagation();
                       onRemoveUploadJob(job.id);

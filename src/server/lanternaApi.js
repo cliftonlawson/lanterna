@@ -1192,6 +1192,55 @@ async function clearUploadJob(request, env) {
   return json({ ok: true, uploadJobId });
 }
 
+async function cancelUploadJob(request, env) {
+  const body = await readJson(request);
+  const { accountId } = await requireAccountContext(request, env);
+  const uploadJobId = requireString(body, 'uploadJobId');
+  const rows = await supabaseRest(
+    env,
+    `upload_jobs?select=id,gallery_id,target_id,target_type,status,upload_phase,is_replacement,r2_key,stream_upload_id,multipart_upload_id&account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}&limit=1`,
+    { headers: { accept: 'application/json' } },
+  );
+  const job = rows?.[0];
+  if (!job) return errorJson('Upload job not found.', 404);
+  if (job.status === 'complete' || job.upload_phase === 'ready') {
+    return errorJson('Completed uploads can be cleared, but not cancelled.', 409);
+  }
+
+  const gallery = await assertGalleryMembership(env, accountId, job.gallery_id);
+  if (job.r2_key && job.multipart_upload_id) {
+    await abortR2MultipartUpload(env, { key: job.r2_key, uploadId: job.multipart_upload_id });
+  }
+  if (job.r2_key) await deleteR2Object(env, job.r2_key);
+  if (job.stream_upload_id) await deleteStreamVideo(env, job.stream_upload_id);
+
+  if (!job.is_replacement && job.target_id && uploadTargetTypes.has(job.target_type)) {
+    const table = job.target_type === 'photo' ? 'photos' : 'videos';
+    await supabaseRest(
+      env,
+      `${table}?gallery_id=eq.${encodeURIComponent(gallery.id)}&id=eq.${encodeURIComponent(job.target_id)}&deleted_at=is.null`,
+      {
+        body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+        headers: { prefer: 'return=minimal' },
+        method: 'PATCH',
+      },
+    );
+  }
+
+  await supabaseRest(env, `upload_jobs?account_id=eq.${encodeURIComponent(accountId)}&id=eq.${encodeURIComponent(uploadJobId)}`, {
+    method: 'DELETE',
+    headers: { prefer: 'return=minimal' },
+  });
+
+  return json({
+    isReplacement: Boolean(job.is_replacement),
+    ok: true,
+    targetId: job.target_id || null,
+    targetType: job.target_type,
+    uploadJobId,
+  });
+}
+
 async function deleteGalleryMedia(request, env) {
   const body = await readJson(request);
   const { accountId } = await requireAccountContext(request, env);
@@ -2173,6 +2222,7 @@ export async function handleLanternaApiRequest(request, { env = {} } = {}) {
     if (request.method === 'POST' && path === 'upload/video/start-playback') return await startVideoPlaybackPreparation(request, env);
     if (request.method === 'POST' && path === 'upload/complete') return await uploadComplete(request, env);
     if (request.method === 'POST' && path === 'upload/clear-job') return await clearUploadJob(request, env);
+    if (request.method === 'POST' && path === 'upload/cancel-job') return await cancelUploadJob(request, env);
     if (request.method === 'POST' && path === 'media/delete') return await deleteGalleryMedia(request, env);
     if (request.method === 'POST' && path === 'media/process-ready') return await processReady(request, env);
     if (request.method === 'POST' && path === 'background/slot') return await backgroundSlot(request, env);
