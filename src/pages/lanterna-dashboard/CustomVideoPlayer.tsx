@@ -37,11 +37,11 @@ export function CustomVideoPlayer({ className = '', durationSeconds = 0, fallbac
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<StreamPlayer | null>(null);
-  const mutedRef = useRef(true);
+  const mutedRef = useRef(false);
   const onPlayRef = useRef(onPlay);
   const [active, setActive] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const knownDuration = finiteMediaTime(durationSeconds);
   const [duration, setDuration] = useState(knownDuration);
@@ -67,6 +67,8 @@ export function CustomVideoPlayer({ className = '', durationSeconds = 0, fallbac
   useEffect(() => {
     setActive(false);
     setPlaying(false);
+    mutedRef.current = false;
+    setMuted(false);
     setCurrentTime(0);
     setDuration(knownDuration);
     setStreamFailed(false);
@@ -211,6 +213,8 @@ export function CustomVideoPlayer({ className = '', durationSeconds = 0, fallbac
   const play = () => {
     if (!hasPlayableSource) return;
     if (!active) {
+      mutedRef.current = false;
+      setMuted(false);
       setActive(true);
       return;
     }
@@ -382,13 +386,13 @@ function streamIframeSrc(iframeUrl: string, posterUrl?: string) {
   try {
     const url = new URL(iframeUrl);
     url.searchParams.set('autoplay', 'true');
-    url.searchParams.set('muted', 'true');
+    url.searchParams.set('muted', 'false');
     url.searchParams.set('controls', 'false');
     if (posterUrl) url.searchParams.set('poster', posterUrl);
     return url.toString();
   } catch {
     const separator = iframeUrl.includes('?') ? '&' : '?';
-    return `${iframeUrl}${separator}autoplay=true&muted=true&controls=false`;
+    return `${iframeUrl}${separator}autoplay=true&muted=false&controls=false`;
   }
 }
 
