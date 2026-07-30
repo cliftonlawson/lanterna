@@ -17,6 +17,7 @@ const platformBilling = read('../src/server/platformBilling.js');
 const publicGallery = read('../src/pages/PublicGalleryPage.tsx');
 const customVideoPlayer = read('../src/pages/lanterna-dashboard/CustomVideoPlayer.tsx');
 const stripe = read('../src/server/stripeCheckout.js');
+const transactionalEmail = read('../src/server/transactionalEmail.js');
 const legal = read('../src/pages/LegalPage.tsx');
 const account = read('../src/pages/lanterna-dashboard/AccountScreen.tsx');
 const videoDrawer = read('../src/pages/lanterna-dashboard/VideoDrawer.tsx');
@@ -85,7 +86,10 @@ assert.match(customVideoPlayer, /durationSeconds/);
 assert.match(customVideoPlayer, /finiteMediaTime\(player\.duration\)/);
 assert.match(customVideoPlayer, /onChange=\{\(event\) => seek\(event\.currentTarget\.value\)\}/);
 assert.match(videoDrawer, /createPortal/);
+assert.match(videoDrawer, /return createPortal\(\(/);
 assert.match(videoDrawer, /capturePortalTarget/);
 assert.match(videoDrawer, /timeSeconds: captureSecond/);
+assert.match(api, /senderName: branding\?\.studio_name/);
+assert.match(transactionalEmail, /brandedSender/);
 
 console.log('launch integrity checks passed');

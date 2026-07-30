@@ -32,6 +32,21 @@ function cleanAccentColor(value = '') {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : '#6EE7F9';
 }
 
+function brandedSender(from, senderName) {
+  const configuredFrom = String(from || '').trim() || 'LANTERNA <deliver@lanterna.video>';
+  const brand = String(senderName || '')
+    .replace(/[\r\n<>"]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  if (!brand) return configuredFrom;
+
+  const bracketedAddress = configuredFrom.match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/i)?.[1];
+  const bareAddress = configuredFrom.match(/^([^<>\s]+@[^<>\s]+)$/i)?.[1];
+  const address = bracketedAddress || bareAddress;
+  return address ? `${brand} <${address}>` : configuredFrom;
+}
+
 function textToHtml(text = '') {
   return escapeHtml(text)
     .split(/\n{2,}/)
@@ -119,7 +134,7 @@ export function buildDeliveryEmailContent({
   return { html, text };
 }
 
-export function createDeliveryEmailPayload(env, { to, subject, text, html, replyTo }) {
+export function createDeliveryEmailPayload(env, { to, subject, text, html, replyTo, senderName }) {
   const recipient = String(to || '').trim();
   const cleanSubject = String(subject || '').trim();
   const cleanText = String(text || '').trim();
@@ -130,7 +145,10 @@ export function createDeliveryEmailPayload(env, { to, subject, text, html, reply
   if (!cleanHtml && !cleanText) throw new Error('An email body is required.');
 
   return {
-    from: env.EMAIL_FROM || env.RESEND_FROM_EMAIL || 'LANTERNA <deliver@lanterna.video>',
+    from: brandedSender(
+      env.EMAIL_FROM || env.RESEND_FROM_EMAIL || 'LANTERNA <deliver@lanterna.video>',
+      senderName,
+    ),
     html: cleanHtml,
     reply_to: replyTo || env.EMAIL_REPLY_TO || undefined,
     subject: cleanSubject,
