@@ -323,7 +323,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
     }
   };
 
-  return (
+  return createPortal((
     <div className={`drawer-backdrop ${captureOpen ? 'is-capturing' : ''}`}>
       <button className="drawer-close" onClick={onClose}><X size={17} /> Close</button>
       <section className="video-drawer">
@@ -479,7 +479,7 @@ export function VideoDrawer({ demo = false, gallery, publicGalleryBase, uploadJo
         </div>
       ), capturePortalTarget)}
     </div>
-  );
+  ), capturePortalTarget);
 }
 
 function formatFrameTime(seconds: number) {

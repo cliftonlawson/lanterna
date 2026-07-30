@@ -2012,6 +2012,7 @@ async function deliveryRecord(request, env) {
     try {
       const email = await sendTransactionalEmail(env, {
         html: emailContent.html,
+        senderName: branding?.studio_name,
         subject,
         text: emailContent.text,
         to: recipient.email,
